@@ -1,6 +1,6 @@
 {
-  "name": "electron-tests",
-  "productName": "electron-tests",
+  "name": "Theatre Mix Clone",
+  "productName": "theatre-mix-clone",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".vite/build/main.js",
