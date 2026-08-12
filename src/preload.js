@@ -3,10 +3,23 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('presonus', {
-  discover: () => ipcRenderer.invoke('presonus:discover'),
+  	discover: () => 
+		ipcRenderer.invoke('presonus:discover'),
 
-  connect: (host, port) =>
-        ipcRenderer.invoke('presonus:connect', { host, port }),
-  set_dca: (dca) =>
-        ipcRenderer.invoke('presonus:set_dca', { dca }),
+  	connect: (host, port) =>
+	  	ipcRenderer.invoke('presonus:connect', { host, port }),
+
+  	set_dca: (dca) =>
+	  	ipcRenderer.invoke('presonus:set_dca', { dca }),
+
+  	write_cue: cue_object =>
+	  	ipcRenderer.invoke('presonus:write_cue', {cue_object}),
+});
+
+contextBridge.exposeInMainWorld('showApi', {
+	loadShow: path =>
+		ipcRenderer.invoke('show:load', path),
+
+	getShow: () =>
+		ipcRenderer.invoke('show:get')
 });

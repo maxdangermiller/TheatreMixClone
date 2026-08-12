@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import Test from './components/Test';
 import ClientManager from './components/ClientManager';
-import Editor from './components/Editor';
+import Editor from './components/Editor2';
 
 const App = () => {
 	return <div>

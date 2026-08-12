@@ -2,10 +2,10 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 
 import { Client, Discovery } from '@featherbear/presonus-studiolive-api';
 
-import {convert_ip_to_octets, is_ip_valid} from './utils/ip_tools';
+import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
 
-import DCA from './types/dca';
-import Cue from './types/cue';
+import DCA from '../types/dca';
+import Cue from '../types/cue';
 
 const fs = require('node:fs/promises');
 
@@ -176,8 +176,4 @@ const write_cue = async (_event, {cue_object}) => {
 
 }
 
-// Subscribe all the functions
-ipcMain.handle('presonus:discover', discover);
-ipcMain.handle('presonus:connect', connect);
-ipcMain.handle('presonus:set_dca', set_dca);
-
+export {discover, connect, set_dca, write_cue};

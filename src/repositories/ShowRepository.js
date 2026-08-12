@@ -15,7 +15,7 @@ class ShowRepository {
 
     load() {
 
-        const show = new ShowFile();
+        const show = new ShowFile();;
 
         show.actors =
             this.db.all('SELECT * FROM actors')
@@ -34,8 +34,7 @@ class ShowRepository {
                 .map(x => new Position(x));
 
         show.profiles =
-            this.db.all('SELECT * FROM profiles')
-                .map(x => new Profile(x));
+            this.db.all('SELECT * FROM profiles').map(x => new Profile(x));
 
         show.ensembles =
             this.db.all('SELECT * FROM ensembles')

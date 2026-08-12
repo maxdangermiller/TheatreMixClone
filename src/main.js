@@ -5,16 +5,36 @@ import started from 'electron-squirrel-startup';
 import DatabaseConnection from './database/DatabaseConnection';
 import ShowRepository from './repositories/ShowRepository';
 
-import './sound.js'
+import {discover, connect, set_dca, write_cue} from './main/sound.js'
+import {loadShow, getShow} from './main/showManager.js'
 
 console.log('[MAIN] main.js loaded');
 
+/*
 let db = new DatabaseConnection("/Users/maxmiller/Desktop/Programming/TheatreMixClone/LionKingKidsV2.db")
 let show_rep = new ShowRepository(db);
 
 let show = show_rep.load();
 
-console.log(show.cues)
+console.log(show.profiles)
+*/
+
+
+// Subscribe all the functions
+ipcMain.handle('presonus:discover', discover);
+ipcMain.handle('presonus:connect', connect);
+ipcMain.handle('presonus:set_dca', set_dca);
+ipcMain.handle('presonus:write_cue', write_cue);
+
+ipcMain.handle('show:load', async (_, path) => {
+    return loadShow(path);
+});
+
+ipcMain.handle('show:get', async () => {
+    return getShow();
+});
+
+
 
 if (started) {
   app.quit();
@@ -23,8 +43,8 @@ if (started) {
 
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1200,
+    height: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
