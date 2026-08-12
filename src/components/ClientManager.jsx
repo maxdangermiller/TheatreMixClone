@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react'
 
 import { is_ip_valid, ip_regex } from '../utils/ip_tools';
 
-const mixers = await window.presonus.discover();
+// const mixers = await window.presonus.discover();
 
-console.log(mixers);
+// console.log(mixers);
 
 
 const ClientManager = (params) => {
 
-	const [ consoleIP, setConsoleIP ] = useState("0.0.0.0");
+	const [ consoleIP, setConsoleIP ] = useState("169.254.4.171");
 	const [ valid, setValid ] = useState(false);
 	const [ options, setOptions] = useState([]);
 	

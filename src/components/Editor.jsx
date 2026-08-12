@@ -4,9 +4,9 @@ import { is_ip_valid, ip_regex } from '../utils/ip_tools';
 import Cue from '../types/cue';
 import DCA from '../types/dca';
 
-const mixers = await window.presonus.discover();
+// const mixers = await window.presonus.discover();
 
-console.log(mixers);
+// console.log(mixers);
 
 let counter = 1;
 
@@ -27,9 +27,13 @@ const Editor = (params) => {
         new_cue.setDCA(new DCA(6, [6], "P6", -10, "#000000"));
         new_cue.setDCA(new DCA(7, [7], "P7", -20, "#000000"));
         new_cue.setDCA(new DCA(8, [8], "P8", -10, "#000000"));
-        
+
         setCues(prev_cues => [...prev_cues, new_cue])
     }
+
+    useEffect(() => {
+        
+    }, [])
 
 
 	return <>

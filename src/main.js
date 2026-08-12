@@ -2,9 +2,19 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
+import DatabaseConnection from './database/DatabaseConnection';
+import ShowRepository from './repositories/ShowRepository';
+
 import './sound.js'
 
 console.log('[MAIN] main.js loaded');
+
+let db = new DatabaseConnection("/Users/maxmiller/Desktop/Programming/TheatreMixClone/LionKingKidsV2.db")
+let show_rep = new ShowRepository(db);
+
+let show = show_rep.load();
+
+console.log(show.cues)
 
 if (started) {
   app.quit();

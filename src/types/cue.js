@@ -40,8 +40,9 @@ export default class Cue {
 	 * @async
 	 */
 	async send() {
-		for (const dca in this.dcas) {
-			dca.send();
+		for (let dca of this.dcas) {
+			console.log(dca)
+			await dca.send();
 		}
 	}
 }

@@ -3,7 +3,7 @@ import DCA from "../types/dca";
 
 function Test() {
 
-	const build_test = () => {
+	const build_test = async () => {
 
 		let cue1 = new Cue()
 		cue1.setDCA(new DCA(1, [1], "P1", 0));
@@ -15,7 +15,9 @@ function Test() {
 		cue1.setDCA(new DCA(7, [7], "P7", -20));
 		cue1.setDCA(new DCA(8, [8], "P8", -10));
 
-		cue1.send();
+		console.log(cue1)
+
+		await cue1.send();
 	}
 
 	return <button onClick={build_test}>I did a thing!!!</button>

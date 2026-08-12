@@ -25,22 +25,24 @@ class DCA {
 	}
 
 	/**
-	 * Send DCA config to the board
-	 */
-	send() {
-		window.presonus.set_dta(this);
-	} 
-
-	/**
 	 * Get Channel Selector
 	 * @returns {ChannelSelector} selector
 	 */
 	get_selector() {
+		// TODO: Change to DCA?
 		return {
-			type: 'DCA',
+			type: 'AUX',
 			channel: this.number
 		};
 	}
+
+	/**
+	 * Send DCA config to the board
+	 * @async
+	 */
+	async send() {
+		window.presonus.set_dca(this);
+	} 
 }
 
 export default DCA;

@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('presonus', {
 
   connect: (host, port) =>
         ipcRenderer.invoke('presonus:connect', { host, port }),
+  set_dca: (dca) =>
+        ipcRenderer.invoke('presonus:set_dca', { dca }),
 });
