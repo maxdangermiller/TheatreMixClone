@@ -10,7 +10,8 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "echo \"No linting configured\""
+    "lint": "echo \"No linting configured\"",
+    "postinstall": "patch-package"
   },
   "keywords": [],
   "author": {
@@ -29,9 +30,11 @@
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
     "@featherbear/presonus-studiolive-api": "^1.8.0",
+    "better-sqlite3": "^13.0.3",
     "electron": "43.3.0",
-    "vite": "^8.2.1",
-    "better-sqlite3": "^13.0.3"
+    "patch-package": "^8.0.1",
+    "postinstall-postinstall": "^2.1.0",
+    "vite": "^8.2.1"
   },
   "dependencies": {
     "@featherbear/presonus-studiolive-api": "^1.8.0",

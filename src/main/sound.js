@@ -160,19 +160,33 @@ const set_dca = async (_event, {dca_object}) => {
 /**
  * Write Cue - NEW
  * @param {Event} _event 
- * @param {*} cue_object 
+ * @param {Cue} cue_object 
  */
 const write_cue = async (_event, {cue_object}) => {
-	// filtergroup/ch1/name - string
+	
+	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
+	
+	// Write assignments
+	// filtergroup/ch1/line* - 0 or 1
+	
+
+	// Write mutes
 	// filtergroup/ch1/mute - true or false
+	
+
+	// Write volume
 	// filtergroup/ch1/volume - 0.0 - 1.0
+	
+	
+	
+	// Write name
+	// filtergroup/ch1/name - string
+	
+
+	// Write AUX assignments?
 	// filtergroup/ch1/mute_aux* - 0 or 1
 	// filtergroup/ch1/aux* - volume 0.0 - 1.0
-	// filtergroup/ch1/line* - 0 or 1
-
-	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
-
-
+	
 
 }
 
