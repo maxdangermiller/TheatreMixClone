@@ -4,13 +4,16 @@ import { Client, Discovery } from '@featherbear/presonus-studiolive-api';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
 
+/*
 import DCA from '../types/dca';
 import Cue from '../types/cue';
+*/
 
 const fs = require('node:fs/promises');
 
 // Global Presonus Client Object
-let presonusClient = null;
+/** @type {Client} */
+let presonusClient = null; 
 
 const CONTROLLED_LINES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
@@ -47,7 +50,7 @@ const discover = async () => {
  */
 const connect = async (_event, {host, port}) => {
 	console.log("[SOUND:connect]: Connecting to Sound Board at ip address: " + host + " on port " + port + ".")
-	presonusClient = new Client({host: "169.254.4.171", port: 53000}, {autoreconnect: true, logLevel: "debug"});
+	presonusClient = new Client({host: host, port: port}, {autoreconnect: true, logLevel: "debug"});
 
 	presonusClient.on('connected', () => {
 		console.log("Connected to the device!")
@@ -59,43 +62,26 @@ const connect = async (_event, {host, port}) => {
 	presonusClient.on('closed', () => {
 		console.log("Closed!")
 	})
-	
 
+	presonusClient.on('meter', handleMeteringData);
+	
+	
 	await presonusClient.connect().then(() => {
 		console.log("[SOUND:connect]: Connected to Sound Board.")
-		// console.dir(presonusClient.dumpState(), { depth: null })
-		fs.appendFile('state.json', JSON.stringify(presonusClient.dumpState(), null, 2));
-
-
+		console.log(`[SOUND:connect]: Version ${presonusClient.state.get('global.mixer_version')}`);
 		
-		// Set channel 1 fader to -6 dB over a duration of 3 seconds
-		presonusClient.setChannelVolumeLogarithmic({
-			type: 'LINE',
-			channel: 1
-		}, -6, 3000).then(() => {
-
-
-			// Unmute channel 2
-			presonusClient.unmute({
-				type: 'LINE',
-				channel: 2
-			})
-
-			presonusClient.setChannelVolumeLogarithmic({
-				type: 'LINE',
-				channel: 1
-			}, -100, 3000)
-		})
-
-		/*
-		presonusClient.sendList('presets/channel').then(j => {
-  			console.log('Got channel list', j)
-  		})
-			*/
-		
-
-		console.log(`Version ${presonusClient.state.get('global.mixer_version')}`);
+		// presonusClient.meterSubscribe()
+		console.log("[SOUND:connect]: Connected to Metering Data.");
 	});
+}
+
+
+/**
+ * 
+ * @param {Meter} metering 
+ */
+const handleMeteringData = async (metering) => {
+
 }
 
 /**
@@ -103,7 +89,8 @@ const connect = async (_event, {host, port}) => {
  * @deprecated
  * @param {Event} _event
  * @param {DCA} dca_object 
- */
+*/
+/*
 const set_dca = async (_event, {dca_object}) => {
 
 	// TODO: Remove
@@ -155,7 +142,7 @@ const set_dca = async (_event, {dca_object}) => {
 		}
 	}
 }
-
+*/
 
 /**
  * Write Cue - NEW
@@ -163,31 +150,153 @@ const set_dca = async (_event, {dca_object}) => {
  * @param {Cue} cue_object 
  */
 const write_cue = async (_event, {cue_object}) => {
+
+	/*
+	cue_object = {
+		number: 0,
+		point: 60,
+		name: 'Preshow Speech',
+		dca01Channels: '16',
+		dca02Channels: '9',
+		dca03Channels: '',
+		dca04Channels: '',
+		dca05Channels: '',
+		dca06Channels: '',
+		dca07Channels: '',
+		dca08Channels: '',
+		dca01Label: 'Stage 1',
+		dca02Label: 'Pumbaa',
+		dca03Label: '-',
+		dca04Label: '-',
+		dca05Label: '-',
+		dca06Label: '-',
+		dca07Label: '-',
+		dca08Label: '-',
+		channelPositions: '',
+		channelProfiles: '',
+		fxMutes: '',
+		channelFX: '',
+		snippets: '',
+		qLabCue: '0.6',
+		channelLevels: '',
+		scenes: '',
+		colour: 1,
+		scenePoints: '',
+		dca09Channels: '',
+		dca09Label: '-',
+		dca10Channels: '',
+		dca10Label: '-',
+		dca11Channels: '',
+		dca11Label: '-',
+		dca12Channels: '',
+		dca12Label: '-',
+		skip: 0
+	}
+	*/
 	
 	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
+
+	if (presonusClient === null) {
+		throw new Error("Client has not yet been connected!");
+		return;
+	}
 	
 	// Write assignments
 	// filtergroup/ch1/line* - 0 or 1
-	
+	try {
+		for (let i = 1; i <= 8; i++) {
+			presonusClient.assign_dca(
+				{type: 'DCA', channel: i}, 
+				cue_object[`dca0${i}Channels`].split(",").map(Number),
+				CONTROLLED_LINES
+			);
+			console.log(`Assigned DCA #${i}`);
+		}
+	} catch (error) {
+		console.log("[SOUND:write_cue]: Failed to write DCA assignments", error);
+	}
 
+	
 	// Write mutes
-	// filtergroup/ch1/mute - true or false
-	
+	// filtergroup/ch?/mute - true or false
+	try {
+		for (let i = 1; i <= 8; i++) {
 
+			if (cue_object[`dca0${i}Channels`] === '') 
+			{
+				presonusClient.mute({type: 'DCA', channel: i});
+			} 
+			
+			else 
+			{
+				presonusClient.unmute({type: 'DCA', channel: i});
+			}
+		}
+		
+	} catch (error) {
+		console.log("[SOUND:write_cue]: Failed to set DCA Mutes", error);
+	}
+	
+	
 	// Write volume
 	// filtergroup/ch1/volume - 0.0 - 1.0
+	try {
+		for (let i = 1; i <= 8; i++) {
+
+			if (cue_object[`dca0${i}Channels`] === '') 
+			{
+				presonusClient.setChannelVolumeLogarithmic({type: 'DCA', channel: i}, -84);
+			} 
+			
+			else 
+			{
+				presonusClient.setChannelVolumeLogarithmic({type: 'DCA', channel: i}, -20);
+			}
+		}
+		
+	} catch (error) {
+		console.log("[SOUND:write_cue]: Failed to set DCA Volumes", error);
+	}
 	
 	
 	
 	// Write name
 	// filtergroup/ch1/name - string
+	try {
+		for (let i = 1; i <= 8; i++) {
+			presonusClient.setName({type: 'DCA', channel: i}, cue_object[`dca0${i}Label`]);
+		}
+		
+	} catch (error) {
+		console.log("[SOUND:write_cue]: Failed to set DCA Labels", error);
+	}
+
+
+	// Write Colors
+	try {
+		for (let i = 1; i <= 8; i++) {
+			if (cue_object[`dca0${i}Channels`] === '') 
+			{
+				presonusClient.setColor({type: 'DCA', channel: i}, "#000000");
+			} 
+			
+			else 
+			{
+				presonusClient.unmute({type: 'DCA', channel: i}, "#0c0076");
+			}
+		}
+		
+	} catch (error) {
+		console.log("[SOUND:write_cue]: Failed to set DCA Colors", error);
+	}
+
 	
 
-	// Write AUX assignments?
+	// TODO: Write AUX assignments?
 	// filtergroup/ch1/mute_aux* - 0 or 1
 	// filtergroup/ch1/aux* - volume 0.0 - 1.0
 	
 
 }
 
-export {discover, connect, set_dca, write_cue};
+export {discover, connect, write_cue};

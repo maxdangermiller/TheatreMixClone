@@ -4,9 +4,22 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: '/build/icons', // .icns will be inferred
+    ignore: [
+      /^\/src/,        // Ignores your raw frontend source code
+      /^\/.git/,       // Ignores git history
+      /^\/angular/,    // Ignores raw angular/react workspaces if applicable
+      /^\/\.vscode/,   // Ignores editor configuration files
+      /^\/\.node_modules/,   // Ignores editor configuration files
+      /^\/\.patches/,   // Ignores editor configuration files
+      /^\/\.presonous/,   // Ignores editor configuration files
+      /^\/\.node_modules/,   // Ignores editor configuration files
+    ],
+
   },
   rebuildConfig: {},
   makers: [
+    /*
     {
       name: '@electron-forge/maker-squirrel',
       config: {},
@@ -23,6 +36,10 @@ module.exports = {
       name: '@electron-forge/maker-rpm',
       config: {},
     },
+    */
+    {
+      name: '@electron-forge/maker-dmg'
+    }
   ],
   plugins: [
     {

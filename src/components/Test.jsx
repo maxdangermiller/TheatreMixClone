@@ -1,9 +1,10 @@
-import Cue from "../types/cue";
-import DCA from "../types/dca";
+// import Cue from "../types/cue";
+// import DCA from "../types/dca";
 
 function Test() {
 
 	const build_test = async () => {
+		/*
 
 		let cue1 = new Cue()
 		cue1.setDCA(new DCA(1, [1], "P1", 0));
@@ -18,6 +19,7 @@ function Test() {
 		console.log(cue1)
 
 		await cue1.send();
+		*/
 	}
 
 	return <button onClick={build_test}>I did a thing!!!</button>

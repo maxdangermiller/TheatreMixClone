@@ -5,7 +5,7 @@ import started from 'electron-squirrel-startup';
 import DatabaseConnection from './database/DatabaseConnection';
 import ShowRepository from './repositories/ShowRepository';
 
-import {discover, connect, set_dca, write_cue} from './main/sound.js'
+import {discover, connect, write_cue} from './main/sound.js'
 import {loadShow, getShow} from './main/showManager.js'
 
 console.log('[MAIN] main.js loaded');
@@ -23,7 +23,7 @@ console.log(show.profiles)
 // Subscribe all the functions
 ipcMain.handle('presonus:discover', discover);
 ipcMain.handle('presonus:connect', connect);
-ipcMain.handle('presonus:set_dca', set_dca);
+// ipcMain.handle('presonus:set_dca', set_dca);
 ipcMain.handle('presonus:write_cue', write_cue);
 
 ipcMain.handle('show:load', async (_, path) => {
@@ -42,9 +42,11 @@ if (started) {
 
 
 const createWindow = () => {
+  console.log(path.join(__dirname, '../../build/icons/icon_512x512.png'),);
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: path.join(__dirname, '../../build/icons/icon_512x512.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },

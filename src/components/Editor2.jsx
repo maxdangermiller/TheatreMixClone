@@ -12,6 +12,7 @@ import Cue from '../models/Cue.js';
 
 let counter = 1;
 
+// const show = await window.showApi.loadShow('./HaydenTest.tmix');
 const show = await window.showApi.loadShow('./LionKingKidsV2.db');
 const sorted_cues = show.cues.sort((a,b) => cue_sorter(a,b));
 
@@ -46,8 +47,8 @@ const Editor = (params) => {
 		
 		const channels = cue[`${prefix}${dca_number}Channels`].replace(" ", "").split(",");
 		const label = cue[`${prefix}${dca_number}Label`];
-
-		if (label !== null && typeof(label) === String && label !== "") {
+		
+		if (label !== null && label !== "") {
 			// Use specified label
 			return label;
 		}
@@ -96,6 +97,7 @@ const Editor = (params) => {
 			dca11Label: get_DCA_label(cue, 11),
 			dca12Label: get_DCA_label(cue, 12),
 		}
+		console.log("[Editor2] Firing cue: ", cue)
 		console.log("[Editor2] Firing (modified) cue: ", modified_cue)
 
 		await window.presonus.write_cue(modified_cue);
