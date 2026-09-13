@@ -1,0 +1,82 @@
+
+> TheatreMixClone@1.0.0 package
+> electron-forge package
+
+❯ Checking your system
+2026-08-28T19:53:39.896Z electron-forge:check-system checking system, create ~/.skip-forge-system-check to stop doing this
+❯ Checking package manager version
+2026-08-28T19:53:39.897Z electron-forge:package-manager Resolved package manager to npm. (Derived from NODE_INSTALLER: undefined, npm_config_user_agent: npm/11.19.0 node/v26.7.0 darwin arm64 workspaces/false, lockfile: npm)
+✔ Found npm@11.19.0
+✔ Checking your system
+[?25h❯ Preparing to package application
+2026-08-28T19:53:40.154Z electron-forge:project-resolver searching for project in: /Users/maxmiller/Desktop/Programming/TheatreMixClone
+2026-08-28T19:53:40.155Z electron-forge:project-resolver package.json with forge dependency found in /Users/maxmiller/Desktop/Programming/TheatreMixClone/package.json
+2026-08-28T19:53:40.164Z electron-forge:import-search searching [
+  '@electron-forge/plugin-vite',
+  '/Users/maxmiller/Desktop/Programming/TheatreMixClone/@electron-forge/plugin-vite',
+  '/Users/maxmiller/Desktop/Programming/TheatreMixClone/node_modules/@electron-forge/plugin-vite'
+] relative to /Users/maxmiller/Desktop/Programming/TheatreMixClone
+2026-08-28T19:53:40.164Z electron-forge:import-search testing @electron-forge/plugin-vite
+2026-08-28T19:53:40.227Z electron-forge:plugin:vite hooking process events
+You have set packagerConfig.ignore, the Electron Forge Vite plugin normally sets this automatically.
+
+Your packaged app may be larger than expected if you dont ignore everything other than the '.vite' folder
+✔ Preparing to package application
+❯ Running packaging hooks
+❯ Running generateAssets hook
+✔ Running generateAssets hook
+❯ Running prePackage hook
+❯ [plugin-vite] Building production Vite bundles
+❯ Building main and preload targets...
+❯ Building renderer targets...
+❯ Building src/main.js target
+❯ Building src/preload.js target
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+2026-08-28T19:53:40.271Z electron-forge:plugin:vite no error in buildEnd and reached closeBundle so build succeeded
+✔ Building src/preload.js target
+2026-08-28T19:53:40.285Z electron-forge:plugin:vite no error in buildEnd and reached closeBundle so build succeeded
+✔ Building src/main.js target
+✔ Building main and preload targets...
+✔ Built target main_window
+✔ Building renderer targets...
+✔ [plugin-vite] Building production Vite bundles
+✔ Running prePackage hook
+✔ Running packaging hooks
+❯ Packaging application
+› Determining targets...
+2026-08-28T19:53:40.304Z electron-forge:packager packaging with options {
+  asar: true,
+  overwrite: true,
+  ignore: Proxy([
+    /^\/src/,
+    /^\/.git/,
+    /^\/angular/,
+    /^\/\.vscode/,
+    /^\/\.node_modules/,
+    /^\/\.patches/,
+    /^\/\.presonous/,
+    /^\/\.node_modules/,
+    /^\/\..vite/
+  ]),
+  quiet: true,
+  icon: '/build/icons',
+  osxSign: false,
+  dir: '/Users/maxmiller/Desktop/Programming/TheatreMixClone',
+  arch: 'arm64',
+  platform: 'darwin',
+  afterFinalizePackageTargets: [ [Function (anonymous)] ],
+  afterComplete: [ [Function (anonymous)] ],
+  afterCopy: [ [Function (anonymous)] ],
+  afterExtract: [ [Function (anonymous)] ],
+  afterPrune: [ [Function (anonymous)] ],
+  out: '/Users/maxmiller/Desktop/Programming/TheatreMixClone/out',
+  electronVersion: '43.3.0'
+}
+2026-08-28T19:53:40.308Z electron-forge:packager targets: [ { platform: 'darwin', arch: 'arm64' } ]
+❯ Packaging for arm64 on darwin
+❯ Copying files
+❯ Preparing native dependencies
+❯ Finalizing package
+2026-08-28T19:53:40.752Z electron-forge:plugin:vite handling process exit with: { cleanup: true }

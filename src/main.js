@@ -5,8 +5,10 @@ import started from 'electron-squirrel-startup';
 import DatabaseConnection from './database/DatabaseConnection';
 import ShowRepository from './repositories/ShowRepository';
 
-import {discover, connect, write_cue} from './main/sound.js'
-import {loadShow, getShow} from './main/showManager.js'
+import {discover, connect, write_cue} from './main/sound.js';
+import {loadShow, getShow} from './main/showManager.js';
+
+import {handle_open_file} from './main/fileManager.js';
 
 console.log('[MAIN] main.js loaded');
 
@@ -33,6 +35,8 @@ ipcMain.handle('show:load', async (_, path) => {
 ipcMain.handle('show:get', async () => {
     return getShow();
 });
+
+ipcMain.handle('dialog:openFile', handle_open_file);
 
 
 

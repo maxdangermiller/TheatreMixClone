@@ -2,16 +2,33 @@ import React, { useEffect, useState } from 'react'
 
 import { is_ip_valid, ip_regex } from '../utils/ip_tools';
 
-// const mixers = await window.presonus.discover();
+import FileDialogue from './FileDialogue';
+import ShowFile from '../models/ShowFile';
 
-// console.log(mixers);
+/**
+ * @typedef {Object} ClientManagerProps
+ * @property {ShowFile} showData
+ * @property {Function} setShowData
+ */
 
-
-const ClientManager = (params) => {
+/**
+ * Client Manager
+ * @param {ClientManagerProps} params 
+ */
+const ClientManager = ({showData, setShowData}) => {
 
 	const [ consoleIP, setConsoleIP ] = useState("169.254.4.171");
 	const [ valid, setValid ] = useState(false);
 	const [ options, setOptions] = useState([]);
+
+
+	const load_show = async (path) => {
+		if (path === "") {
+			console.error("[ClientManager::load_show]: File Path cannot be blank... silly goose!");
+		}
+
+		setShowData(await window.showApi.loadShow(path));
+	}
 	
 
 	/**
@@ -59,12 +76,15 @@ const ClientManager = (params) => {
 			<input value={consoleIP} onChange={handle_ip_change} style={{outlineColor: valid ? "black" : "red"}}/>
 		</label>
 		<button onClick={connect}>Connect</button>
+		<br/>
 
 		{
 			options.map((option, index) => (
 				<h2 key={index}>{option}</h2>
 			))
 		}
+
+		<FileDialogue load_show={load_show} />
 	</>;
 }
 

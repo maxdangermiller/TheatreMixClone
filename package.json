@@ -1,5 +1,5 @@
 {
-  "name": "Theatre Mix Clone",
+  "name": "TheatreMixClone",
   "productName": "theatre-mix-clone",
   "version": "1.0.0",
   "description": "My Electron application description",
@@ -11,7 +11,8 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\"",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package; npm run rebuild",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "keywords": [],
   "author": {
@@ -30,8 +31,6 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
-    "@featherbear/presonus-studiolive-api": "^1.8.0",
-    "better-sqlite3": "^13.0.3",
     "electron": "43.3.0",
     "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",

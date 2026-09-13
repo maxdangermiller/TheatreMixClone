@@ -21,7 +21,7 @@ function getShow() {
 	return currentShow;
 }
 
-module.exports = {
+export {
 	loadShow,
 	getShow
 };

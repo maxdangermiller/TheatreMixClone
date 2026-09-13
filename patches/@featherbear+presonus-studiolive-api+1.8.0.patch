@@ -1,6 +1,6 @@
 diff --git a/node_modules/@featherbear/presonus-studiolive-api/.DS_Store b/node_modules/@featherbear/presonus-studiolive-api/.DS_Store
 new file mode 100644
-index 0000000..8b510fc
+index 0000000..8d270ea
 Binary files /dev/null and b/node_modules/@featherbear/presonus-studiolive-api/.DS_Store differ
 diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.cjs b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.cjs
 index 600453f..a52cb8a 100644
@@ -137,23 +137,1068 @@ index 600453f..a52cb8a 100644
  	/**
  	* For a mono channel, the pan value is the pan value from 0 (hard left) to 100 (hard right)
  	* For a stereo channel, the pan value is the width from 0 to 100 (stereo)
-diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
-index eae9828..54d99ea 100644
---- a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
-+++ b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
-@@ -1050,6 +1050,7 @@ let counts;
- function setCounts(channelCount) {
- 	counts = channelCount;
- }
-+/*
- function parseChannelString(selector, whitelist) {
- 	let { type, channel } = selector;
- 	const { mixType, mixNumber } = selector;
-@@ -1069,6 +1070,64 @@ function parseChannelString(selector, whitelist) {
- 	channel = Math.trunc(channel);
- 	if (!(channel > 0) || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) throw new Error("Invalid channel provided");
- 	return `${Channel[type]}/ch${channel}`;
-+}*/
+diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.js b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.js
+new file mode 100644
+index 0000000..b5b8e6f
+--- /dev/null
++++ b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.js
+@@ -0,0 +1,1937 @@
++import bunyan from "bunyan";
++import { EventEmitter } from "node:events";
++import zlib from "node:zlib";
++import { inspect } from "util";
++import dgram from "node:dgram";
++import * as dgram$1 from "dgram";
++import { Socket } from "net";
++import Queue from "queue";
++//#region \0rolldown/runtime.js
++var __defProp = Object.defineProperty;
++var __exportAll = (all, no_symbols) => {
++	let target = {};
++	for (var name in all) __defProp(target, name, {
++		get: all[name],
++		enumerable: true
++	});
++	if (!no_symbols) __defProp(target, Symbol.toStringTag, { value: "Module" });
++	return target;
++};
++//#endregion
++//#region src/lib/util/logging.ts
++globalThis.logger = bunyan.createLogger({
++	name: "presonus-studiolive-api",
++	level: 61
++});
++const Channel = {
++	LINE: "line",
++	RETURN: "return",
++	FXRETURN: "fxreturn",
++	TALKBACK: "talkback",
++	AUX: "aux",
++	FX: "fxbus",
++	SUB: "sub",
++	MAIN: "main",
++	DCA: "filtergroup",
++	MONO: "mono",
++	MASTER: "master"
++};
++//#endregion
++//#region src/lib/constants/vendor/message.ts
++let MessageCode = /* @__PURE__ */ function(MessageCode) {
++	MessageCode["KeepAlive"] = "KA";
++	MessageCode["Hello"] = "UM";
++	MessageCode["JSON"] = "JM";
++	/**
++	* @deprecated Use ParamValue
++	*/
++	MessageCode["Setting"] = "PV";
++	MessageCode["ParamValue"] = "PV";
++	MessageCode["ParamChars"] = "PC";
++	MessageCode["ParamString"] = "PS";
++	/**
++	* @deprecated Use ParamStrList
++	*/
++	MessageCode["DeviceList"] = "PL";
++	MessageCode["ParamStrList"] = "PL";
++	MessageCode["FileRequest"] = "FR";
++	MessageCode["FileData"] = "FD";
++	MessageCode["ZLIB"] = "ZB";
++	MessageCode["Unknown1"] = "BO";
++	MessageCode["Chunk"] = "CK";
++	/**
++	* Assume the B means byte (8)
++	*/
++	MessageCode["Unknown3"] = "MB";
++	/**
++	* Linear position of main mix faders and sends
++	* Assume the S means short (16)
++	*/
++	MessageCode["Meter16"] = "MS";
++	MessageCode["FaderPosition"] = "MS";
++	return MessageCode;
++}({});
++//#endregion
++//#region src/lib/constants/vendor/presonus.ts
++/**
++* These values seem to be related to request-response matching
++*/
++let CByte = /* @__PURE__ */ function(CByte) {
++	CByte[CByte["A"] = 104] = "A";
++	CByte[CByte["B"] = 101] = "B";
++	return CByte;
++}({});
++/**
++* UC..
++*/
++const PacketHeader = Buffer.from([
++	85,
++	67,
++	0,
++	1
++]);
++//#endregion
++//#region src/lib/constants/connection.ts
++let ConnectionState = /* @__PURE__ */ function(ConnectionState) {
++	ConnectionState["error"] = "error";
++	ConnectionState["closed"] = "closed";
++	ConnectionState["connected"] = "connected";
++	ConnectionState["reconnecting"] = "reconnecting";
++	return ConnectionState;
++}({});
++//#endregion
++//#region src/lib/util/treeUtil.ts
++/**
++* Split a path string into tokens
++* Delimiter: `.` or `/`
++* If `key` is already an array, pass through the value
++*
++* @example
++* tokenisePath('this.is.a.key') // => ['this', 'is', 'a', 'key']
++* tokenisePath('this/is/a/key') // => ['this', 'is', 'a', 'key']
++* tokenisePath(['this', 'is', 'a', 'key']) // => ['this', 'is', 'a', 'key'] // passthrough
++*/
++function tokenisePath(key) {
++	if (typeof key === "string") if (key.includes("/")) key = key.split("/");
++	else key = key.split(".");
++	return key;
++}
++function simplifyPathTokens(path) {
++	let tokens = tokenisePath(path);
++	/**
++	* Key replacements
++	*/
++	const slice = tokens.slice(-2);
++	if (slice[0] === "dca") {
++		const old = [...tokens];
++		tokens = [...tokens.slice(0, -2), ...slice.slice(1)];
++		logger.debug({
++			oldPath: old.join("."),
++			newPath: tokens.join(".")
++		}, "Simplified path token");
++	}
++	return tokens;
++}
++//#endregion
++//#region src/lib/util/zlib/ubjson.ts
++/**
++* Deserialise a zlib buffer into a raw object payload
++* Partially implements the UBJSON specification
++* https://ubjson.org
++*/
++function deserialiseUBJSON(buf) {
++	let idx = 0;
++	if (buf[idx++] !== 123) return null;
++	const rootTree = {};
++	const workingSet = [rootTree];
++	while (idx !== buf.length) {
++		let keyData;
++		if (Array.isArray(workingSet[0])) {
++			if (buf[idx] === 93) {
++				idx++;
++				workingSet.shift();
++				continue;
++			}
++		} else {
++			const controlCharacter = buf[idx++];
++			if (controlCharacter === 125) {
++				workingSet.shift();
++				continue;
++			}
++			if (controlCharacter !== 105) throw new Error(`(ZB) Failed to find delimiter 1, found ${controlCharacter} instead at position ${idx}`);
++			const length = buf[idx++];
++			keyData = buf.slice(idx, idx + length);
++			idx += length;
++		}
++		const type = buf[idx++];
++		let length = 0;
++		switch (type) {
++			case 123: {
++				const leaf = {};
++				if (Array.isArray(workingSet[0])) workingSet[0].push(leaf);
++				else workingSet[0][keyData.toString()] = leaf;
++				workingSet.unshift(leaf);
++				continue;
++			}
++			case 91: {
++				const leaf = [];
++				if (Array.isArray(workingSet[0])) workingSet[0].push(leaf);
++				else workingSet[0][keyData.toString()] = leaf;
++				workingSet.unshift(leaf);
++				continue;
++			}
++			case 83:
++				if (buf[idx++] !== 105) throw new Error("(ZB) Failed to find delimiter 2");
++				length = buf[idx++];
++				break;
++			case 100:
++				length = 4;
++				break;
++			case 105:
++				length = 1;
++				break;
++			case 85:
++				length = 1;
++				break;
++			case 108:
++				length = 4;
++				break;
++			case 76:
++				length = 8;
++				break;
++			default: throw new Error(`Unknown type ${type} at position ${idx}`);
++		}
++		const valueData = buf.slice(idx, idx + length);
++		let value;
++		switch (type) {
++			case 83:
++				value = valueData.toString();
++				break;
++			case 100:
++				value = valueData.readFloatBE();
++				break;
++			case 105:
++				value = valueData.readInt8();
++				break;
++			case 85:
++				value = valueData.readUInt8();
++				break;
++			case 108:
++				value = valueData.readInt32BE();
++				break;
++			case 76:
++				value = valueData.readBigInt64BE();
++				break;
++			default: value = valueData.toString();
++		}
++		idx += length;
++		if (Array.isArray(workingSet[0])) workingSet[0].push(value);
++		else workingSet[0][keyData.toString()] = value;
++	}
++	return rootTree;
++}
++//#endregion
++//#region src/lib/util/ValueTransformer.ts
++/**
++* Lookup - Transformer key
++* Symbol - Reference key
++*/
++const doesLookupMatch = (lookup, symbolPath) => {
++	const lookupPath = Array.isArray(lookup) ? lookup : tokenisePath(lookup);
++	const lastIdx = lookupPath.length;
++	let lookupIdx = 0;
++	let symbolIdx = 0;
++	while (symbolIdx < lastIdx) {
++		if (symbolIdx >= symbolPath.length) return false;
++		const currentSymbol = symbolPath[symbolIdx];
++		const currentToken = lookupPath[lookupIdx];
++		if ([currentSymbol, "*"].includes(currentToken)) {
++			symbolIdx++;
++			lookupIdx++;
++		} else if (currentToken === "**") {
++			if (lookupIdx === lastIdx) break;
++			lookupIdx++;
++			return doesLookupMatch(lookupPath.slice(lookupIdx).reverse(), symbolPath.slice(symbolIdx).reverse());
++		} else if (currentToken.endsWith("*") && currentSymbol.startsWith(currentToken.slice(0, currentToken.indexOf("*")))) {
++			symbolIdx++;
++			lookupIdx++;
++		} else return false;
++	}
++	return true;
++};
++/**
++* Value transformers allow values to be processed different depending on their key
++*/
++function valueTransform(path, value, valueTransformers) {
++	const symbolPath = tokenisePath(path);
++	for (const [lookup, transformer] of Object.entries(valueTransformers)) if (doesLookupMatch(lookup, symbolPath)) {
++		const old = value;
++		value = transformer(value, symbolPath);
++		if (old !== value) try {
++			logger.trace({
++				key: symbolPath.join("."),
++				transformer: lookup,
++				oldValue: old instanceof Buffer ? inspect(old) : old,
++				newValue: value
++			}, "Value transformed");
++		} catch (e) {
++			logger.warn({
++				key: symbolPath.join("."),
++				transformer: lookup,
++				error: e.toString()
++			}, "Value transformed, but could not serialise values");
++		}
++		break;
++	}
++	return value;
++}
++const DEFAULT_TRANSFORMS = {
++	integer: { boolean(value) {
++		if (value === 1) return true;
++		else if (value === 0) return false;
++		throw new Error("Unexpected value converting " + value);
++	} },
++	buffer: {
++		boolean(bytes) {
++			if (bytes.equals(new Uint8Array([
++				0,
++				0,
++				128,
++				63
++			]))) return true;
++			else if (bytes.equals(new Uint8Array([
++				0,
++				0,
++				0,
++				0
++			]))) return false;
++			throw new Error("Unexpected value converting " + bytes);
++		},
++		float(bytes) {
++			return bytes.readFloatLE();
++		}
++	}
++};
++const IGNORE = Symbol("Ignore");
++//#endregion
++//#region src/lib/util/transformers.ts
++/**
++*
++* Ignoring this type because IntelliSense stops offering suggestions
++*
++* {
++* [key: string]: TransformerType
++* }
++*
++*/
++const DEFAULTS = {
++	boolean: {
++		fromPV: DEFAULT_TRANSFORMS.buffer.boolean,
++		fromUB: DEFAULT_TRANSFORMS.integer.boolean
++	},
++	float: { fromPV: DEFAULT_TRANSFORMS.buffer.float },
++	passthrough: {
++		fromPV: (x) => x,
++		fromUB: (x) => x,
++		fromPC: (x) => x
++	}
++};
++const transformers = {
++	"line.*.select": DEFAULTS.boolean,
++	"**.mute": DEFAULTS.boolean,
++	"**.solo": DEFAULTS.boolean,
++	"line.*.48v": DEFAULTS.boolean,
++	"line.*.link": DEFAULTS.boolean,
++	"**.assign_*": DEFAULTS.boolean,
++	"line.*.preampgain": DEFAULTS.float,
++	"line.*.digitalgain": DEFAULTS.float,
++	"line.*.dca.volume": { fromPV: IGNORE },
++	"*.ch*.volume": {
++		fromPV: DEFAULT_TRANSFORMS.buffer.float,
++		fromUB(value) {
++			return value * 100;
++		}
++	},
++	"**.filter.hpf": DEFAULTS.float,
++	"**.busdelay": DEFAULTS.float,
++	"**.delay": DEFAULTS.float,
++	"**.gate.keylisten": DEFAULTS.boolean,
++	"**.gate.expander": DEFAULTS.boolean,
++	"**.gate.*": DEFAULTS.float,
++	"*.anysolo": DEFAULTS.boolean,
++	"line.*.dca.aux*": { fromPV: IGNORE },
++	"fxreturn.*.dca.aux*": { fromPV: IGNORE },
++	"line.*.aux*": DEFAULTS.float,
++	"fxreturn.*.aux*": DEFAULTS.float,
++	"return.*.aux*": DEFAULTS.float,
++	"talkback.*.aux*": DEFAULTS.float,
++	"line.*.pan": DEFAULTS.float,
++	"line.*.stereopan": DEFAULTS.float,
++	"line.*.FX*": DEFAULTS.float,
++	"return.*.FX*": DEFAULTS.float,
++	"line.*.dca.fx*": { fromPV: IGNORE },
++	"**.color": {
++		fromPC(data) {
++			return data.toString("hex");
++		},
++		fromUB(data) {
++			const buffer = Buffer.allocUnsafe(8);
++			if (typeof data === "bigint") {
++				buffer.writeBigInt64BE(data);
++				buffer.reverse();
++			} else {
++				if (data === 0) return null;
++				buffer.writeInt32LE(data);
++			}
++			return buffer.slice(0, 4).toString("hex");
++		}
++	},
++	"permissions.access_code": DEFAULTS.passthrough,
++	"permissions.device_list": DEFAULTS.passthrough,
++	"permissions.mix_permissions": DEFAULTS.passthrough,
++	"permissions.*": DEFAULTS.boolean
++};
++const transformersPV = Object.entries(transformers).filter(([_, { fromPV }]) => fromPV && fromPV !== IGNORE).reduce((obj, [key, { fromPV }]) => {
++	return {
++		...obj,
++		[key]: fromPV
++	};
++}, {});
++const ignorePV = Object.keys(transformers).filter((key) => transformers[key].fromPV === IGNORE);
++const transformersPC = Object.entries(transformers).filter(([_, { fromPC }]) => fromPC).reduce((obj, [key, { fromPC }]) => {
++	return {
++		...obj,
++		[key]: fromPC
++	};
++}, {});
++const transformersUB = Object.entries(transformers).filter(([_, { fromUB }]) => fromUB).reduce((obj, [key, { fromUB }]) => {
++	return {
++		...obj,
++		[key]: fromUB
++	};
++}, {});
++//#endregion
++//#region src/lib/util/zlib/zlibNodeParser.ts
++const ZlibValueSymbol = Symbol("value");
++const ZlibRangeSymbol = Symbol("range");
++const ZlibStringEnumSymbol = Symbol("string");
++const ZlibKeySymbol = Symbol("key");
++/**
++* Parse deserialised zlib data into an object tree
++*/
++function zlibParseNode(node, { base = {} } = {}) {
++	const root = { ...base };
++	function setMetadata(key, value, type) {
++		if (!Object.hasOwn(root, key)) console.warn(`[${root[ZlibKeySymbol].join("/")}/${key}] did not exist, creating`);
++		else if (Object.hasOwn(root[key], type)) console.warn(`[${root[ZlibKeySymbol].join("/")}/${key}] already has metadata ${type.toString()} set, overriding`);
++		root[key] = {
++			...root[key],
++			[type]: value
++		};
++	}
++	const keyHandlers = {
++		children(data) {
++			for (const [key, value] of Object.entries(data)) root[key] = zlibParseNode(value, {
++				base: { [ZlibKeySymbol]: [...root?.[ZlibKeySymbol] ?? [], key] },
++				parent: root
++			});
++		},
++		values(data) {
++			for (let [key, value] of Object.entries(data)) {
++				if (Object.hasOwn(root, key)) console.warn(`[${root[ZlibKeySymbol].join("/")}/${key}] already has value set, overriding`);
++				const symbolPath = [...root?.[ZlibKeySymbol] ?? [], key];
++				/**
++				* Value transformers
++				*/
++				value = valueTransform(symbolPath, value, transformersUB);
++				root[key] = {
++					...root[key],
++					[ZlibKeySymbol]: symbolPath,
++					[ZlibValueSymbol]: value
++				};
++			}
++		},
++		strings(data) {
++			for (const entry of Object.entries(data)) setMetadata(...entry, ZlibStringEnumSymbol);
++		},
++		ranges(data) {
++			for (const entry of Object.entries(data)) setMetadata(...entry, ZlibRangeSymbol);
++		},
++		id: null,
++		shared: null,
++		classId: null,
++		states: null
++	};
++	for (const [key, data] of Object.entries(node)) if (Object.hasOwn(keyHandlers, key)) keyHandlers[key]?.(data);
++	else console.warn(`[${root[ZlibKeySymbol]?.join("/") ?? []}] unexpected child key ${key}`);
++	for (const [key, value] of Object.entries(root)) {
++		if (!Object.hasOwn(value, ZlibKeySymbol)) console.warn(`[${root[ZlibKeySymbol].join("/")}] finished building, but ${key} did not have a value`);
++		delete value[ZlibKeySymbol];
++	}
++	return root;
++}
++/**
++* Extract the contents of a node
++*/
++function dumpNode(node, recurseDepth) {
++	const data = {};
++	if (node[ZlibRangeSymbol]) data.range = node[ZlibRangeSymbol];
++	if (node[ZlibStringEnumSymbol]) data.strings = node[ZlibStringEnumSymbol];
++	if (node[ZlibKeySymbol]) data.key = node[ZlibKeySymbol];
++	if ((typeof recurseDepth === "undefined" || recurseDepth > 0) && Object.keys(node).length > 0) data.children = Object.entries(node).reduce((obj, [key, node]) => ({
++		...obj,
++		[key]: dumpNode(node, recurseDepth ? recurseDepth - 1 : recurseDepth)
++	}), {});
++	if (typeof node[ZlibValueSymbol] !== "undefined") if (Object.keys(data).length > 0) data.value = node[ZlibValueSymbol];
++	else return node[ZlibValueSymbol];
++	return data;
++}
++//#endregion
++//#region src/lib/util/zlib/zlibUtil.ts
++/**
++* Deserialise and parse a zlib buffer into an object tree
++*/
++function zlibParse(zlib) {
++	const payload = deserialiseUBJSON(zlib);
++	if (payload.id !== "Synchronize") {
++		console.warn("Unexpected zlib payload id", payload.id);
++		return;
++	}
++	return zlibParseNode(payload);
++}
++function getZlibValue(node, key) {
++	const tokens = [...simplifyPathTokens(tokenisePath(key))];
++	let cur = node;
++	while (cur && tokens.length > 0) {
++		const next = tokens.shift();
++		cur = cur[next];
++	}
++	cur = cur?.[ZlibValueSymbol] ?? cur;
++	if (cur === void 0) return null;
++	return cur;
++}
++//#endregion
++//#region src/lib/packetParser/ZB.ts
++function handleZBPacket(data) {
++	return parseCompressed(data.slice(4));
++}
++function parseCompressed(data) {
++	return zlibParse(zlib.inflateSync(data));
++}
++//#endregion
++//#region src/lib/packetParser/CK.ts
++let chunkBuffer = [];
++function handleCKPacket(data) {
++	data = data.slice(4);
++	const chunkOffset = data.readUInt32LE(0);
++	const totalSize = data.readUInt32LE(4);
++	const chunkSize = data.readUInt32LE(8);
++	const chunkData = data.slice(12);
++	chunkBuffer.push(chunkData);
++	if (chunkOffset + chunkSize === totalSize) {
++		const fullBuffer = chunkBuffer;
++		chunkBuffer = [];
++		return parseCompressed(Buffer.concat(fullBuffer));
++	}
++}
++//#endregion
++//#region src/lib/packetParser/JM.ts
++function handleJMPacket(data) {
++	return JSON.parse(data.slice(4));
++}
++//#endregion
++//#region src/lib/packetParser/MS.ts
++function handleMSPacket(data) {
++	if (data.slice(0, 4).toString() !== "fdrs") throw new Error("Invalid batch type");
++	const numberOfChannels = data.readUInt16LE(6);
++	data = data.slice(8);
++	const channelValues = [];
++	for (let i = 0; i < numberOfChannels; i++) channelValues.push(data.readUInt16LE(i * 2) / 655.35);
++	data = data.slice(numberOfChannels * 2);
++	const values = {};
++	const mapping = {
++		0: "LINE",
++		1: "RETURN",
++		2: "FXRETURN",
++		3: "TALKBACK",
++		4: "AUX",
++		5: "FX",
++		6: "SUB",
++		7: "MAIN",
++		8: "MONO",
++		11: "MASTER"
++	};
++	const groupCount = data.readUInt8(0);
++	for (let i = 0; i < groupCount; i++) {
++		const dataOffset = 1 + i * 6;
++		const groupNumber = data.readUInt16LE(dataOffset);
++		const offset = data.readUInt16LE(dataOffset + 2);
++		const count = data.readUInt16LE(dataOffset + 4);
++		let channelType = mapping[groupNumber];
++		if (!channelType) {
++			console.warn("Unknown channel type", groupNumber);
++			channelType = `unknown--${groupNumber}`;
++		}
++		values[channelType] = channelValues.slice(offset, offset + count);
++	}
++	return values;
++}
++//#endregion
++//#region src/lib/packetParser/PC.ts
++function handlePCPacket(data) {
++	const idx = data.indexOf(0);
++	if (idx !== -1) {
++		const name = data.slice(0, idx).toString();
++		return {
++			name,
++			value: valueTransform(name, data.slice(idx + 3), transformersPC)
++		};
++	} else console.warn("Could parse PC packet", data);
++	return data;
++}
++//#endregion
++//#region src/lib/packetParser/PS.ts
++function handlePSPacket(data) {
++	const idx = data.indexOf(0);
++	if (idx !== -1) return {
++		name: data.slice(0, idx).toString(),
++		value: data.slice(idx + 3, -1).toString()
++	};
++	else console.warn("Could parse PS packet", data);
++	return data;
++}
++//#endregion
++//#region src/lib/packetParser/PV.ts
++function handlePVPacket(data) {
++	const idx = data.indexOf(0);
++	if (idx !== -1) {
++		const key = data.slice(0, idx).toString();
++		const partA = data.slice(idx + 1, idx + 1 + 2);
++		const partB = data.slice(idx + 1 + 2);
++		data = {
++			name: key,
++			value: valueTransform(key, partB, transformersPV),
++			partA,
++			partB
++		};
++	} else console.warn("Could parse PV packet", data);
++	return data;
++}
++//#endregion
++//#region src/lib/util/valueUtil.ts
++/**
++* Convert a logarithmic volume to its respective linear value [0-100]
++*/
++function logVolumeToLinear(db) {
++	const curveFunction = (x) => Math.trunc(72.5204177782 + 2.473473992 * x + .026567557 * x ** 2 + 880866e-10 * x ** 3);
++	const inputBounds = [-84, 10];
++	const outputBounds = [0, 100];
++	db = clamp(db, inputBounds);
++	if (db === inputBounds[0]) return outputBounds[0];
++	if (db === inputBounds[1]) return outputBounds[1];
++	return clamp(curveFunction(db), outputBounds);
++}
++/**
++* Restrict `val` between a `min` and `max`
++*/
++function clamp(val, [min, max]) {
++	return Math.max(min, Math.min(max, val));
++}
++/**
++* Transition a value along an easing sine curve.
++* _Should_ work from a -> b when a </> b
++*
++* @param from Initial value
++* @param to Final value
++* @param duration Transition period (ms)
++* @param fn Function to execute(intermediateValue)
++* @param callback Completion callback
++* @returns Cancel function
++*/
++function transitionValue(from, to, duration, fn, callback) {
++	if (duration <= 0 || from === to) {
++		fn(to);
++		callback?.();
++		return (() => {});
++	}
++	const minInterval = 10;
++	const curveFunction = (position) => {
++		return -(Math.cos(Math.PI * position) - 1) / 2;
++	};
++	const interval = Math.max(duration / 100, minInterval);
++	const bounds = [0, 1];
++	const step = clamp(interval / duration, bounds);
++	let progress = 0;
++	const tick = () => {
++		fn(from + (to - from) * curveFunction(progress));
++		if (progress === bounds[1]) {
++			cancelTransition();
++			callback?.();
++		} else progress = clamp(progress + step, bounds);
++	};
++	const timer = setInterval(() => tick(), interval);
++	tick();
++	const cancelTransition = () => {
++		clearInterval(timer);
++	};
++	return cancelTransition;
++}
++var UniqueRandom = class UniqueRandom {
++	static #instances = {};
++	static get(bits) {
++		if (!UniqueRandom.#instances[bits]) UniqueRandom.#instances[bits] = new UniqueRandom(bits);
++		return UniqueRandom.#instances[bits];
++	}
++	#max;
++	#active;
++	constructor(bits) {
++		this.#max = 2 ** bits - 1;
++		this.#active = [];
++	}
++	request() {
++		let current;
++		while (this.#active.includes(current = Math.floor(Math.random() * (this.#max + 1))));
++		this.#active.push(current);
++		return current;
++	}
++	release(value) {
++		this.#active = this.#active.filter((v) => v !== value);
++	}
++	get active() {
++		return [...this.#active];
++	}
++};
++//#endregion
++//#region src/lib/packetParser/FD.ts
++/**
++* Piece chunks of the same ID together
++*/
++const BufferCollector = new class {
++	#ids = UniqueRandom.get(16);
++	#files = {};
++	/**
++	* Collect a chunk
++	* @returns Completed chunk if available, else nothing
++	*/
++	put(data) {
++		let ret;
++		const chunk = parseChunk(data);
++		if (!this.#ids.active.includes(chunk.id)) {
++			logger.warn({ id: chunk.id }, "Received unexpected FD chunk");
++			return;
++		}
++		if (chunk.totalSize === chunk.payloadSize) ret = {
++			id: chunk.id,
++			data: chunk.data
++		};
++		else {
++			let currChunkSet = this.#files[chunk.id];
++			if (!currChunkSet) currChunkSet = this.#files[chunk.id] = {
++				max: chunk.totalSize,
++				data: Buffer.allocUnsafe(0)
++			};
++			if (chunk.payloadSize !== chunk.data.length) {
++				logger.warn({
++					id: chunk.id,
++					expected: chunk.payloadSize,
++					size: chunk.data.length
++				}, "FD chunk was inconsistent in size");
++				return;
++			}
++			if (chunk.totalSize !== currChunkSet.max || chunk.bytesRead !== currChunkSet.data.length) {
++				logger.warn({ id: chunk.id }, "FD chunk was not consistent with the chunk set information");
++				return;
++			}
++			currChunkSet.data = Buffer.concat([currChunkSet.data, chunk.data]);
++			if (currChunkSet.max === currChunkSet.data.length) ret = {
++				id: chunk.id,
++				data: currChunkSet.data
++			};
++		}
++		if (!ret) return;
++		if (this.#files[ret.id]) delete this.#files[ret.id];
++		this.#ids.release(ret.id);
++		return ret;
++	}
++}();
++function parseChunk(data) {
++	let header = data.slice(0, 14);
++	const id = header.readUInt16BE();
++	header = header.slice(2);
++	const bytesRead = header.readUInt16LE();
++	header = header.slice(2);
++	header.slice(0, 2);
++	header = header.slice(2);
++	const totalSize = header.readUInt16LE();
++	header = header.slice(2);
++	header.slice(0, 4);
++	header = header.slice(4);
++	const payloadSize = header.readUInt16LE();
++	data = data.slice(14);
++	return {
++		id,
++		data,
++		bytesRead,
++		totalSize,
++		payloadSize
++	};
++}
++function handleFDPacket(data) {
++	const result = BufferCollector.put(data);
++	if (result) {
++		try {
++			data = JSON.parse(result.data.toString());
++		} catch {
++			data = void 0;
++		}
++		return {
++			id: result.id,
++			data
++		};
++	}
++}
++//#endregion
++//#region src/lib/util/bufferUtil.ts
++/**
++* Convert an unsigned short (16-bit) to a 2-byte buffer
++*/
++function toShort(i) {
++	const res = Buffer.allocUnsafe(2);
++	res.writeUInt16LE(i);
++	return res;
++}
++/**
++* Convert a decimal to a 4-byte buffer
++*/
++function toFloat(i) {
++	const res = Buffer.allocUnsafe(4);
++	res.writeFloatLE(i);
++	return res;
++}
++/**
++* Convert a decimal to a 4-byte boolean
++*/
++function toBoolean(val) {
++	return toFloat(val ? 1 : 0);
++}
++Buffer.prototype.matches = function(buffer) {
++	return buffer.length >= this.length && this.compare(buffer, 0, this.length) === 0;
++};
++//#endregion
++//#region src/lib/util/messageProtocol.ts
++/**
++* Decode packet buffer
++* @returns message code
++* @returns buffer
++*/
++function analysePacket(packet, ignoreLengthMismatch = false) {
++	if (!PacketHeader.matches(packet)) {
++		console.warn("Ignoring irrelevant packet", packet);
++		return [null, null];
++	}
++	const payloadLength = packet.slice(4, 6).readUInt16LE();
++	if (payloadLength + 6 !== packet.length) {
++		if (!ignoreLengthMismatch) {
++			console.warn(`Packet is meant to be ${payloadLength + 6} bytes long, but is actually ${packet.length} bytes long`);
++			return [null, null];
++		}
++	}
++	return [packet.slice(6, 8).toString(), packet.slice(12)];
++}
++/**
++* Craft a packet
++*
++* @param messageCode
++* @param data
++* @param customA
++* @param customB
++* @returns
++*/
++function createPacket(messageCode, data, customA, customB) {
++	if (!data) data = Buffer.allocUnsafe(0);
++	const connIdentity = Buffer.from([
++		customA ?? CByte.A,
++		0,
++		customB ?? CByte.B,
++		0
++	]);
++	if (connIdentity.length !== 4) throw Error("connIdentity");
++
++	const lengthLE = toShort(messageCode.length + connIdentity.length + data.length);
++
++	if (lengthLE.length !== 2) throw Error("lengthLE");
++
++	const b = Buffer.alloc(PacketHeader.length + lengthLE.length + messageCode.length + connIdentity.length + data.length);
++	
++	let cursor = 0;
++	b.fill(PacketHeader);
++	b.fill(lengthLE, cursor += PacketHeader.length);
++	b.write(typeof messageCode === "string" ? messageCode : messageCode.toString("utf8"), cursor += lengthLE.length);
++	b.fill(connIdentity, cursor += messageCode.length);
++	if (typeof data === "string") b.write(data, cursor += connIdentity.length);
++	else b.fill(data, cursor += connIdentity.length);
++	return b;
++}
++//#endregion
++//#region src/lib/Discovery.ts
++/**
++* Device discovery client
++* Listen to the `discover` event with <Discover>.on('discover', callback)
++*/
++var Discovery = class extends EventEmitter {
++	socket;
++	/**
++	* Scan for devices
++	*
++	* @param timeout Duration (in milliseconds) to discover for, or indefinitely if empty
++	* @returns
++	*/
++	async start(timeout = null) {
++		return new Promise((resolve, reject) => {
++			this.stop();
++			this.setup();
++			if (timeout !== null) setTimeout(() => {
++				this.stop();
++				resolve();
++			}, timeout);
++		});
++	}
++	/**
++	* Shut down discovery client
++	*/
++	stop() {
++		if (this.socket !== void 0) {
++			this.socket.close();
++			this.socket = void 0;
++		}
++	}
++	/**
++	* Setup routine
++	*/
++	setup() {
++		const socket = dgram.createSocket({
++			type: "udp4",
++			reuseAddr: true
++		});
++		socket.bind(47809, "0.0.0.0");
++		socket.on("listening", function() {
++			this.setBroadcast(true);
++		});
++		socket.on("message", (packet, rinfo) => {
++			const [code, data] = analysePacket(packet, true);
++			if (!code) return;
++			const fragments = [];
++			for (let payload = data.slice(20), cur = 0, f; cur < payload.length; cur += f.length + 1) {
++				f = payload.slice(cur, payload.indexOf("\0", cur));
++				fragments.push(f.toString("utf8"));
++			}
++			const [nameA, _, serial, nameB] = fragments;
++			if (!serial) return;
++			this.emit("discover", {
++				name: nameA,
++				serial,
++				ip: rinfo.address,
++				port: rinfo.port,
++				timestamp: /* @__PURE__ */ new Date()
++			});
++		});
++		this.socket = socket;
++	}
++};
++//#endregion
++//#region src/lib/MeterServer.ts
++function parseDataFrame(data) {
++	if (!data.subarray(0, 4).equals(PacketHeader)) return;
++	if (data.subarray(6, 8).toString() !== MessageCode.Meter16) return;
++	const type = data.subarray(12, 16).toString();
++	switch (type) {
++		case "levl": {
++			const valueCount = data.readUInt16LE(18);
++			const values = [];
++			for (let i = 0; i < valueCount; i++) values.push(data.readUInt16LE(20 + i * 2));
++			const descriptorsCount = data[20 + valueCount * 2];
++			if (21 + valueCount * 2 + descriptorsCount * 6 !== data.length) throw new Error("Decode error: Algorithm incorrect");
++			const meterData = {};
++			for (let i = 0; i < descriptorsCount; i++) {
++				const descriptorOffset = 21 + valueCount * 2 + i * 6;
++				const [groupNumber, offset, count] = [
++					data.readInt16BE(descriptorOffset),
++					data.readInt16LE(descriptorOffset + 2),
++					data.readInt16LE(descriptorOffset + 4)
++				];
++				const groupValues = values.slice(offset, offset + count);
++				meterData["type"] = "level";
++				meterData[groupNumber] = groupValues;
++			}
++			return meterData;
++		}
++		case "redu": break;
++		case "rtan": break;
++		default: console.warn("Unknown message type:", type);
++	}
++}
++/**
++* Create a UDP server and await data.
++*
++* This function **does not** send the packet to initiate the meter data request,
++* it relies on a request sent from the <API>.meterSubscribe method
++*
++* @param port UDP port to listen on
++* @param channelCounts Channel count data
++* @param onData Callback
++*/
++function createServer(port, onData) {
++	if (typeof port !== "number" || port < 0 || port > 65535) throw Error("Invalid port number");
++	const UDPserver = dgram$1.createSocket("udp4");
++	UDPserver.on("error", (err) => {
++		UDPserver.close();
++		throw Error("Meter server error: " + err.stack);
++	});
++	return new Promise((resolve) => {
++		UDPserver.on("message", (msg, rinfo) => {
++			const parsed = parseDataFrame(Buffer.from(msg));
++			if (parsed) onData(parsed);
++		});
++		UDPserver.on("listening", () => {
++			console.log("Listening on port", UDPserver.address().port);
++			resolve(UDPserver);
++		});
++		UDPserver.bind(port);
++	});
++}
++//#endregion
++//#region src/lib/util/DataClient.ts
++/**
++* TCP data client to receive messages from UCNet devices
++*/
++function DataClient_default(callback, customSocket = null) {
++	const TCPclient = customSocket ?? new Socket();
++	let remaining = 0;
++	let payload = Buffer.allocUnsafe(0);
++	const Q = new Queue({
++		autostart: true,
++		concurrency: 1
++	});
++	TCPclient.on("data", (bytes) => {
++		let frame = Buffer.from(bytes);
++		Q.push((finish) => {
++			(function() {
++				while (frame.length !== 0) if (remaining === 0 && PacketHeader.matches(frame)) {
++					const correctLength = frame.readUInt16LE(4);
++					if (frame.length - 6 < correctLength) {
++						payload = frame;
++						remaining = correctLength - (frame.length - 6);
++						return;
++					} else {
++						callback(frame.slice(0, correctLength + 6));
++						frame = frame.slice(correctLength + 6);
++						remaining = 0;
++						payload = Buffer.allocUnsafe(0);
++					}
++				} else if (remaining > 0) {
++					const extractN = Math.min(remaining, frame.length);
++					payload = Buffer.concat([payload, frame.slice(0, extractN)]);
++					remaining -= extractN;
++					frame = frame.slice(extractN);
++					if (remaining === 0) {
++						callback(payload);
++						payload = Buffer.allocUnsafe(0);
++					}
++					if (remaining < 0) throw Error("Extracted more bytes than the payload specified");
++				} else throw new Error("Header not matching and remaining is zero");
++			})();
++			finish();
++		});
++	});
++	return TCPclient;
++}
++//#endregion
++//#region src/lib/util/channelUtil.ts
++let counts;
++/**
++* TODO: Create a proper context
++*/
++function setCounts(channelCount) {
++	counts = channelCount;
++}
 +
 +
 +/**
@@ -164,7 +1209,7 @@ index eae9828..54d99ea 100644
 + * @returns {String} channel selection string for SL API
 + */
 +function parseChannelString(selector, whitelist) {
-+	let { chanType, channelNum } = selector;
++	let { type, channel } = selector;
 +	const { mixType, mixNumber } = selector;
 +	
 +	// Check if there's a valid mix type flag to select in the specific channel
@@ -182,7 +1227,7 @@ index eae9828..54d99ea 100644
 +			// Valid AUX or FX mix selection
 +		}
 +		// Allow Selecting a line channel if the channel type is a DCA
-+		else if (chanType == "DCA" && mixType == "LINE") {
++		else if (type == "DCA" && mixType == "LINE") {
 +			// Allow
 +		}
 +		else {
@@ -190,43 +1235,639 @@ index eae9828..54d99ea 100644
 +		}
 +	}
 +
-+	// Check if chanType is valid
-+	if (!Object.keys(Channel).includes(chanType)) {
++	// Check if type is valid
++	if (!Object.keys(Channel).includes(type)) {
++		console.log(type);
 +		throw new Error("Invalid channel type provided")
 +	}
 +
-+	// If selecting MAIN or TALKBACK, force channelNum to be 1
-+	if (["MAIN", "TALKBACK"].includes(chanType)) {
-+		channelNum = 1;
++	// If selecting MAIN or TALKBACK, force channel to be 1
++	if (["MAIN", "TALKBACK"].includes(type)) {
++		channel = 1;
 +	}
 +
 +
-+	const oldChannel = channelNum;
-+	channelNum = Math.trunc(channelNum);
++	const oldChannel = channel;
++	channel = Math.trunc(channel);
 +
-+	// Make sure channel actually exsists inside of the chanType
-+	if (channelNum <= 0 || channelNum !== oldChannel || counts && !(counts[chanType] && counts[chanType] >= channelNum)) {
++	// Make sure channel actually exsists inside of the type
++	if (channel <= 0 || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) {
 +		throw new Error("Invalid channel provided");
 +	}
 +
 +	// return the selector for the channel
-+	return `${Channel[chanType]}/ch${channelNum}`;
- }
- //#endregion
- //#region src/lib/util/jsonPacketUtil.ts
-@@ -1626,7 +1685,7 @@ var Client = class {
- 	* @private
- 	*/
- 	_getMuteTargetString(selector) {
--		let targetString = parseChannelString(selector);
++	return `${Channel[type]}/ch${channel}`;
++}
++//#endregion
++//#region src/lib/util/jsonPacketUtil.ts
++/**
++* Add length metadata
++* @param buffer
++* @returns length16LE 0x00 0x00 DATA
++*/
++function prependLengthData(buffer) {
++	return Buffer.concat([
++		toShort(buffer.length),
++		Buffer.from([0, 0]),
++		buffer
++	]);
++}
++function jsonStringifyPack(json) {
++	return JSON.stringify(json, null, " ");
++}
++function JSONtoPacketBuffer(json) {
++	return prependLengthData(Buffer.from(jsonStringifyPack(json)));
++}
++//#endregion
++//#region src/lib/util/subscriptionUtil.ts
++/**
++* Create subscription packet
++*/
++function craftSubscribe(overrides = {}) {
++	return JSONtoPacketBuffer({
++		id: "Subscribe",
++		clientName: "UC-Surface",
++		clientInternalName: "ucremoteapp",
++		clientType: "StudioLive API",
++		clientDescription: "User",
++		clientIdentifier: "133d066a919ea0ea",
++		clientOptions: "perm users levl redu rtan",
++		clientEncoding: 23106,
++		...overrides
++	});
++}
++const unsubscribePacket = JSONtoPacketBuffer({ id: "Unsubscribe" });
++//#endregion
++//#region src/lib/util/KVTree.ts
++/**
++* Recursive tree builder for '/'-delimited property strings
++*/
++const Parent = Symbol("parent");
++const BaseSymbol = Symbol("base");
++/**
++
++Tree
+++-Value
+++-Value
+++-Tree
++| +-Value
++| \-Tree
++|   \-Value   
+++-Value
++
++**/
++var KVTree = class KVTree {
++	constructor(base = "/", parent = null) {
++		this[BaseSymbol] = base;
++		this[Parent] = parent;
++	}
++	register(path, value) {
++		const newPath = tokenisePath(path);
++		const base = newPath.shift();
++		if (newPath.length === 0) {
++			this[base] = value;
++			return;
++		}
++		if (!(base in this)) this[base] = new KVTree(base, this);
++		this[base].register(newPath.join("/"), value);
++	}
++	get(path) {
++		const newPath = tokenisePath(path);
++		const base = newPath.shift();
++		const val = this[base];
++		return newPath.length > 0 ? val?.get?.(newPath) : val;
++	}
++	get path() {
++		if (!this[Parent]) return "";
++		return [this[Parent].path, this[BaseSymbol]].join("/");
++	}
++	toJSON() {
++		return Object.entries(this).reduce((cur, [key, obj]) => {
++			return {
++				...cur,
++				[key]: repr(obj)
++			};
++		}, {});
++	}
++};
++function repr(obj) {
++	if (obj instanceof KVTree) return obj.toJSON();
++	if (obj instanceof Buffer) return obj.toString("hex");
++	if (typeof obj === "bigint") return obj.toString();
++	return obj;
++}
++//#endregion
++//#region src/lib/util/CacheProvider.ts
++/**
++* Provides a function to set/get paths
++* Delimiter: `.` or `/`
++* @param fallback Fallback method interface that is used if the path could not be found internally
++*/
++function CacheProvider(fallback) {
++	const data = new KVTree();
++	return {
++		set(path, value) {
++			return data.register(path, value);
++		},
++		get(path, _default = null) {
++			return data.get(path) ?? fallback?.get(path) ?? _default;
++		},
++		_data: data
++	};
++}
++//#endregion
++//#region src/lib/util/KeepAliveHelper.ts
++var KeepAliveHelper = class {
++	#lastRecv;
++	#timeout;
++	#loop;
++	#ids;
++	constructor(timeout = 3e3) {
++		this.#lastRecv = null;
++		this.#timeout = timeout;
++		this.#ids = [];
++	}
++	updateTime() {
++		this.#lastRecv = Date.now();
++	}
++	intercept(fn) {
++		return (data) => {
++			const result = fn(data);
++			if (!!result && this.#ids.includes(result.id)) {
++				this.#ids = this.#ids.filter((id) => id !== result.id);
++				this.updateTime();
++				return null;
++			}
++			return result;
++		};
++	}
++	start(checkFn, failFn) {
++		clearInterval(this.#loop);
++		this.#loop = setInterval(() => {
++			if (Date.now() - this.#lastRecv > this.#timeout) {
++				logger.debug("Timeout exceeded for keep-alive response");
++				clearInterval(this.#loop);
++				return failFn();
++			}
++			const id = UniqueRandom.get(16).request();
++			this.#ids.push(id);
++			const idBuffer = Buffer.allocUnsafe(2);
++			idBuffer.writeUInt16BE(id);
++			checkFn([createPacket(MessageCode.KeepAlive), createPacket(MessageCode.FileRequest, Buffer.concat([
++				idBuffer,
++				Buffer.from([
++					70,
++					116,
++					98,
++					114
++				]),
++				Buffer.from([0, 0])
++			]))]);
++		}, 1e3);
++		this.updateTime();
++	}
++};
++//#endregion
++//#region src/lib/util/fileRequestUtil.ts
++const CHANNEL_PRESETS = "presets/channel";
++const PROJECTS = "presets/proj";
++function SCENES_OF(file) {
++	return "presets/proj/" + file;
++}
++//#endregion
++//#region src/lib/Client.ts
++const discovery = new Discovery();
++var Client = class {
++	serverHost;
++	serverPort;
++	options;
++	channelCounts;
++	meteringClient;
++	eventEmitter;
++	fileDataEmitter;
++	keepAliveHelper;
++	state;
++	zlibData;
++	conn;
++	connectPromise;
++	constructor(address, options) {
++		if (!address?.host) throw new Error("Host address not supplied");
++		this.eventEmitter = new EventEmitter();
++		this.fileDataEmitter = new EventEmitter();
++		this.serverHost = address.host;
++		this.serverPort = address?.port || 53e3;
++		this.options = options;
++		if (typeof this.options?.logLevel !== "undefined") logger.level(this.options.logLevel);
++		this.meteringClient = null;
++		this.conn = DataClient_default(this.handleRecvPacket.bind(this));
++		this.state = CacheProvider({ get: (key) => this.zlibData ? getZlibValue(this.zlibData, key) : null });
++		this.on(MessageCode.ZLIB, (ZB) => {
++			this.zlibData = ZB;
++		});
++		this.on(MessageCode.ParamValue, ({ name, value }) => {
++			name = tokenisePath(name);
++			for (const ignoreKey of ignorePV) if (doesLookupMatch(ignoreKey, name)) return;
++			this.state.set(name, value);
++		});
++		this.on(MessageCode.ParamString, ({ name, value }) => {
++			this.state.set(name, value);
++		});
++		this.on(MessageCode.ParamChars, ({ name, value }) => {
++			this.state.set(name, value);
++		});
++		this.on(MessageCode.FaderPosition, (MS) => {
++			for (const [type, values] of Object.entries(MS)) for (let i = 0; i < values.length; i++) this.state.set(`${Channel[type]}/ch${i + 1}/volume`, values[i]);
++		});
++		this.on(MessageCode.FileData, ({ id, data }) => {
++			this.fileDataEmitter.emit(id, data);
++		});
++	}
++	emit(event, ...data) {
++		this.eventEmitter.emit(event, ...data);
++		return this;
++	}
++	on(event, listener) {
++		this.eventEmitter.on(event, listener);
++		return this;
++	}
++	once(event, listener) {
++		this.eventEmitter.once(event, listener);
++		return this;
++	}
++	off(event, listener) {
++		this.eventEmitter.off(event, listener);
++		return this;
++	}
++	addListener(event, listener) {
++		this.eventEmitter.addListener(event, listener);
++		return this;
++	}
++	removeListener(event, listener) {
++		this.eventEmitter.removeListener(event, listener);
++		return this;
++	}
++	/**
++	* Extracts the data structure and cache layer
++	* @internal
++	*/
++	dumpState() {
++		return {
++			internal: dumpNode(this.zlibData),
++			cache: this.state._data.toJSON()
++		};
++	}
++	/**
++	* @param timeout Default 10s
++	*/
++	static async discover(timeout = 10 * 1e3) {
++		const devices = {};
++		const func = (device) => {
++			devices[device.serial] = device;
++		};
++		discovery.on("discover", func);
++		await discovery.start(timeout);
++		discovery.off("discover", func);
++		return Object.values(devices);
++	}
++	/**
++	* Subscribe to the metering data
++	*/
++	async meterSubscribe(port) {
++		port = port ?? 0;
++		this.meteringClient = await createServer.call(this, port, (meterData) => this.emit("meter", meterData));
++		this._sendPacket(MessageCode.Hello, toShort(this.meteringClient.address().port), 0);
++	}
++	/**
++	* Unsubscribe from the metering data
++	*/
++	meterUnsubscribe() {
++		if (!this.meteringClient) return;
++		this.meteringClient.close();
++		this.meteringClient = null;
++	}
++	async connect(subscribeData) {
++		if (this.connectPromise) return this.connectPromise;
++		const connectPromise = new Promise((resolve, reject) => {
++			let fastReconnectTimer;
++			logger.info({
++				host: this.serverHost,
++				port: this.serverPort
++			}, "Connecting to console");
++			const reconnect = () => {
++				logger.debug("Reconnecting");
++				doConnect();
++			};
++			this.conn.addListener("connect", () => {
++				clearTimeout(fastReconnectTimer);
++				this.keepAliveHelper = new KeepAliveHelper(3e3);
++				const chunkedZlibInitCallback = (data) => {
++					this.removeListener(MessageCode.Chunk, chunkedZlibInitCallback);
++					this.emit(MessageCode.ZLIB, data);
++				};
++				this.addListener(MessageCode.Chunk, chunkedZlibInitCallback);
++				Promise.all([new Promise((resolve) => {
++					this.once(MessageCode.ZLIB, () => {
++						this.removeListener(MessageCode.Chunk, chunkedZlibInitCallback);
++						const getCount = (key) => Object.keys(this.state.get(key) ?? {}).length;
++						const channelCounts = {
++							LINE: getCount("line"),
++							AUX: getCount("aux"),
++							FX: getCount("fxbus"),
++							FXRETURN: getCount("fxreturn"),
++							RETURN: getCount("return"),
++							TALKBACK: getCount("talkback"),
++							MAIN: getCount("main"),
++							DCA: getCount("filtergroup"),
++							SUB: getCount("sub"),
++							MASTER: getCount("master"),
++							MONO: getCount("mono")
++						};
++						this.channelCounts = channelCounts;
++						setCounts(channelCounts);
++						resolve(this);
++					});
++				}), new Promise((resolve) => {
++					const subscribeCallback = (data) => {
++						if (data.id === "SubscriptionReply") {
++							this.removeListener(MessageCode.JSON, subscribeCallback);
++							resolve(this);
++						}
++					};
++					this.addListener(MessageCode.JSON, subscribeCallback);
++				})]).then(() => {
++					this.keepAliveHelper.start((packets) => {
++						packets.forEach((bytes) => this._writeBytes(bytes));
++					}, () => {
++						if (!this.conn.destroyed) this.conn.destroy();
++						logger.info("Connection closed");
++						this.emit("closed");
++						console.log("conn was closed so will reconnect");
++						if (this.options?.autoreconnect) {
++							this.emit("reconnecting");
++							reconnect();
++						}
++					});
++					logger.info("Connected");
++					this.emit("connected");
++					resolve(this);
++				});
++				this._sendPacket(MessageCode.JSON, craftSubscribe(subscribeData));
++			});
++			const doConnect = () => {
++				this.conn.destroy();
++				fastReconnectTimer = setTimeout(() => reconnect(), 2e3);
++				this.conn.connect(this.serverPort, this.serverHost);
++				this.conn.once("error", () => {});
++			};
++			doConnect();
++		});
++		this.connectPromise = connectPromise;
++		return connectPromise;
++	}
++	async close() {
++		this.meterUnsubscribe();
++		await this._sendPacket(MessageCode.JSON, unsubscribePacket).then(() => {
++			this.conn.destroy();
++		});
++	}
++	/**
++	* Analyse, decode and emit packets
++	*/
++	handleRecvPacket(packet) {
++		let [messageCode, data] = analysePacket(packet);
++		if (messageCode === null) return;
++		const handlers = {
++			[MessageCode.JSON]: handleJMPacket,
++			[MessageCode.ParamValue]: handlePVPacket,
++			[MessageCode.ParamString]: handlePSPacket,
++			[MessageCode.ZLIB]: handleZBPacket,
++			[MessageCode.FaderPosition]: handleMSPacket,
++			[MessageCode.Chunk]: handleCKPacket,
++			[MessageCode.ParamChars]: handlePCPacket,
++			[MessageCode.FileData]: this.keepAliveHelper.intercept(handleFDPacket),
++			[MessageCode.DeviceList]: null,
++			[MessageCode.Unknown1]: null,
++			[MessageCode.Unknown3]: null
++		};
++		if (Object.hasOwn(handlers, messageCode)) data = handlers[messageCode]?.call?.(this, data);
++		else console.warn("Unhandled message code", messageCode);
++		if (!data) return;
++		this.emit(messageCode, data);
++		this.emit("data", {
++			code: messageCode,
++			data
++		});
++	}
++	async getProjects(fetchScenes) {
++		if (!fetchScenes) return this.sendList(PROJECTS);
++		const result = [];
++		for (const project of await this.getProjects(false)) result.push({
++			...project,
++			scenes: await this.getScenesOfProject(project.name)
++		});
++		return result;
++	}
++	async getScenes() {
++		return this.getScenesOfProject(this.currentProject);
++	}
++	/**
++	* Get scenes of a project stored on the console
++	*/
++	getScenesOfProject(projFile) {
++		return this.sendList(SCENES_OF(projFile));
++	}
++	/**
++	* Current loaded scene
++	*/
++	get currentScene() {
++		const path = this.state.get("presets.loaded_scene_name", "");
++		return path.slice(path.lastIndexOf("/") + 1) || null;
++	}
++	/**
++	* Current loaded project
++	*/
++	get currentProject() {
++		const path = this.state.get("presets.loaded_project_name", "");
++		return path.slice(path.lastIndexOf("/") + 1) || null;
++	}
++	/**
++	* Get channel presets stored on the console
++	*/
++	getChannelPresets() {
++		return this.sendList(CHANNEL_PRESETS);
++	}
++	sendList(key) {
++		const id = UniqueRandom.get(16).request();
++		const idBuffer = Buffer.allocUnsafe(2);
++		idBuffer.writeUInt16BE(id);
++		return new Promise((resolve, reject) => {
++			let timeout;
++			const callback = (data) => {
++				clearTimeout(timeout);
++				if (key === "presets/proj" || key === "presets/channel" || key.startsWith(SCENES_OF(""))) data = data?.files?.filter(({ title }) => title !== "* Empty Location *")?.filter(({ name }) => !(name.endsWith(".lock") || name.endsWith(".cnfg")));
++				return resolve(data);
++			};
++			const eventName = id.toString();
++			this.fileDataEmitter.once(eventName, callback);
++			this._sendPacket(MessageCode.FileRequest, Buffer.concat([
++				idBuffer,
++				Buffer.from("List" + key.toString()),
++				Buffer.from([0, 0])
++			]));
++			timeout = setTimeout(() => {
++				this.fileDataEmitter.removeListener(eventName, callback);
++				UniqueRandom.get(16).release(id);
++				reject(/* @__PURE__ */ new Error("Timeout"));
++			}, 10 * 1e3);
++		});
++	}
++	/**
++	* Send bytes to the console
++	*/
++	async _sendPacket(...params) {
++		return this._writeBytes(createPacket(...params));
++	}
++	async _writeBytes(bytes) {
++		console.log(bytes)
++		return new Promise((resolve) => {
++			this.conn.write(bytes, null, (resp) => {
++				resolve(resp);
++			});
++		});
++	}
++	/**
++	* @param projFile e.g 01.Showfile.proj
++	*/
++	recallProject(projFile) {
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
++			id: "RestorePreset",
++			url: "presets",
++			presetTarget: "",
++			presetTargetSlave: 0,
++			presetFile: "presets/proj/" + projFile
++		}));
++	}
++	/**
++	*
++	* @param projFile e.g. 01.Showfile.proj
++	* @param sceneFile e.g. 02.SceneBackup.scn
++	*/
++	recallProjectScene(projFile, sceneFile) {
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
++			id: "RestorePreset",
++			url: "presets",
++			presetTarget: "",
++			presetTargetSlave: 0,
++			presetFile: `presets/proj/${projFile}/${sceneFile}`
++		}));
++	}
++	recallChannelStrip(selector, chanFile) {
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
++			id: "RestorePreset",
++			url: "presets",
++			presetTarget: parseChannelString(selector, [
++				"LINE",
++				"AUX",
++				"FX",
++				"MAIN"
++			]),
++			presetTargetSlave: 0,
++			presetFile: "presets/channel/" + chanFile
++		}));
++	}
++	/**
++	* Mute a given channel
++	*/
++	mute(selector) {
++		this.setMute(selector, true);
++	}
++	/**
++	* Unmute a given channel
++	*/
++	unmute(selector) {
++		this.setMute(selector, false);
++	}
++	/**
++	* Toggle the mute status of a channel
++	*/
++	toggleMute(selector) {
++		this.setMute(selector, "toggle");
++	}
++	/**
++	* Get mute status of a channel
++	*/
++	getMute(selector) {
++		const state = this.state.get(this._getMuteTargetString(selector));
++		if (state === null) return null;
++		return selector.mixType ? !state : state;
++	}
++	/**
++	* Set the mute status of a channel
++	*/
++	setMute(selector, status) {
++		const targetString = this._getMuteTargetString(selector);
++		const shouldInvert = !!selector.mixType;
++		let state = status === "toggle" ? !this.state.get(targetString) : status;
++		if (status !== "toggle" && shouldInvert) state = !state;
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
++	}
++	/**
++	* @private
++	*/
++	_getMuteTargetString(selector) {
 +		let targetString = parseChannelString(selector);  // "{Channel[type]}/ch{channel}"
- 		if (selector.mixType) targetString += `/assign_${selector.mixType.toLowerCase()}${selector.mixNumber}`;
- 		else targetString += "/mute";
- 		return targetString;
-@@ -1679,6 +1738,60 @@ var Client = class {
- 	getColour(...args) {
- 		return this.getColor.apply(this, args);
- 	}
++		if (selector.mixType) targetString += `/assign_${selector.mixType.toLowerCase()}${selector.mixNumber}`;
++		else targetString += "/mute";
++		return targetString;
++	}
++	/**
++	* Toggle the solo status of a channel
++	*/
++	toggleSolo(selector) {
++		this.setSolo(selector, "toggle");
++	}
++	/**
++	* Get solo status of a channel
++	*/
++	getSolo(selector) {
++		const state = this.state.get(this._getSoloTargetString(selector));
++		if (state === null) return null;
++		return state;
++	}
++	/**
++	* Set the solo status of a channel
++	*/
++	setSolo(selector, status) {
++		const targetString = this._getSoloTargetString(selector);
++		const shouldInvert = !!selector.mixType;
++		let state = status === "toggle" ? !this.state.get(targetString) : status;
++		if (status !== "toggle" && shouldInvert) state = !state;
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
++	}
++	/**
++	* @private
++	*/
++	_getSoloTargetString(selector) {
++		let targetString = parseChannelString(selector);
++		targetString += "/solo";
++		return targetString;
++	}
++	setColor(selector, hex, alpha = 255) {
++		this._sendPacket(MessageCode.ParamChars, Buffer.concat([
++			Buffer.from(`${parseChannelString(selector)}/color\x00\x00\x00`),
++			Buffer.from(hex, "hex"),
++			Buffer.from([alpha])
++		]));
++	}
++	setColour(...args) {
++		return this.setColor.apply(this, args);
++	}
++	getColor(selector) {
++		return this.state.get(`${parseChannelString(selector)}/color`);
++	}
++	getColour(...args) {
++		return this.getColor.apply(this, args);
++	}
 +
 +	/**
 +	 * Set Channel Name
@@ -260,18 +1901,369 @@ index eae9828..54d99ea 100644
 +			controlled_chans = Array.from({ length: this.channelCounts["LINE"] }, (_, index) => index + 1);
 +		} 
 +		
++		console.log(`Assigning DCA #${selector.channel} to channels ${assign_chans}`);
++		console.log(assign_chans);
++
 +		// Loop through every line in the DCA
-+		for (n in controlled_chans) {
++		for (let n of controlled_chans) {
 +			const path = `${targetChanString}/line${n}`;
 +			const cur_state = this.state.get(path);
 +
++			console.log(`path: ${path}, in assign chans ${assign_chans}: ${assign_chans.includes(n)}`);
++			
 +			// If it's in assigned channels, we should assign it
-+			if (n in assign_chans && cur_state !== 1) {
-+				this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), 1]));
++			if (assign_chans.includes(n)) {
++				console.log(`Adding chan #${n}`);
++				// const bytes = Buffer.concat([Buffer.from(targetChanString), Buffer.from('2f6c696e653100000000000000', 'hex')]);
++
++				this._sendPacket(
++					MessageCode.ParamValue,
++					Buffer.concat([
++						Buffer.from("filtergroup/ch1/line1\0\0\0"),
++						toFloat(1.0)
++					]),
++					{customA: 'j', customB: 'e'}
++				);
++
++				if (cur_state !== 1 || true) {
++					// this._sendPacket(MessageCode.ParamValue, bytes, {customA: 'j', customB: 'e'});
++				}
 +			}
 +			// Otherwise unassign it
-+			else if (!(n in assign_chans) && cur_state !== 0) {
-+				this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), 0]));
++			else if (cur_state !== 0) {
++				// console.log(`Removing chan #${n}`);
++				// this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetChanString + "\0\0\0")]));
++			}
++			
++			// Otherwise it must already be correct
++			else {
++				// console.log("[presonus api]: DCA correctly assigned already!");
++			}
++		}
++	}
++
++	/**
++	* For a mono channel, the pan value is the pan value from 0 (hard left) to 100 (hard right)
++	* For a stereo channel, the pan value is the width from 0 to 100 (stereo)
++	*/
++	setPan(selector, pan) {
++		let channelString = parseChannelString(selector);
++		const isStereo = this.state.get(channelString + "/link");
++		if (selector.mixType) switch (selector.mixType) {
++			case "AUX": {
++				const odd = selector.mixNumber - 1 | 1;
++				channelString += `/aux${odd}${odd + 1}_`;
++				if (this.state.get(`aux.ch${selector.mixNumber}.link`)) channelString += isStereo ? "stpan" : "pan";
++				else return;
++				break;
++			}
++			default: throw new Error("Unexpected mix type");
++		}
++		else channelString += "/" + (isStereo ? "stereopan" : "pan");
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${channelString}\x00\x00\x00`), toFloat(pan / 100)]));
++	}
++	/**
++	* @internal By original nature, only an odd numbered channel is targeted (& ~1)
++	*/
++	setLink(selector, link) {
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${parseChannelString(selector)}/link\x00\x00\x00`), toBoolean(link)]));
++	}
++
++	/**
++	 * Get Level Specfic Selector String
++	 * @author Max Miller
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @returns 
++	 */
++	_getLevelString(selector) {
++		let targetString = parseChannelString(selector);
++		
++		if (selector.mixType) {
++			if (selector.mixType == "AUX") {
++				targetString += `/${Channel[selector.mixType]}${selector.mixNumber}`;
++			}
++
++			else if (selector.mixType == "FX") {
++				targetString += `/FX${String.fromCharCode(64 + selector.mixNumber)}`;
++			}
++
++			// No volume adjustment needed, so mixtype LINE is not allowed here
++
++			else {
++				throw new Error("Unexpected mix type");
++			}
++		}
++		else {
++			targetString += "/volume";
++		}
++
++		return targetString;
++	}
++
++	getLevel(selector) {
++		return this.state.get(this._getLevelString(selector));
++	}
++	
++	/**
++	 * Set Level
++	 * targetLevel - [0, 100]
++	 * @author Max Miller
++	 * @internal Send a level command to the target
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @param {Float} targetLevel 
++	 * @param {number} duration 
++	 * @returns {Promise}
++	 */
++	_setLevel(selector, targetLevel, duration = 0) {
++		const targetString = this._getLevelString(selector);
++		const assertReturn = () => {
++			return new Promise((resolve) => {
++				setTimeout(() => {
++					this.state.set(targetString, targetLevel);
++					resolve(null);
++				}, 0);
++			});
++		};
++		const set = (level) => {
++			this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${targetString}\x00\x00\x00`), toFloat(level / 100)]));
++		};
++		if (!duration) {
++			set(targetLevel);
++			return assertReturn();
++		}
++		const currentLevel = this.getLevel(selector) ?? 0;
++		if (currentLevel === targetLevel) return assertReturn();
++		return new Promise((resolve) => {
++			transitionValue(currentLevel, targetLevel, duration, (v) => set(v), async () => {
++				resolve(await assertReturn());
++			});
++		});
++	}
++
++	/**
++	* Set volume (decibels)
++	*
++	* @param channel
++	* @param level range: -84 dB to 10 dB
++	*/
++	async setChannelVolumeLogarithmic(selector, decibel, duration) {
++		return this._setLevel(selector, logVolumeToLinear(decibel), duration);
++	}
++
++	/**
++	* Set volume (pseudo intensity)
++	*
++	* @description Sound is difficult, so this function attempts to provide a "what-you-see-is-what-you-get" interface to control the volume levels.
++	*              `100` Sets the fader to the top (aka +10 dB)
++	*              `72` Sets the fader to unity (aka 0 dB) or a value close enough
++	*              `0` Sets the fader to the bottom (aka -84 dB)
++	* @see http://www.sengpielaudio.com/calculator-levelchange.htm
++	*/
++	async setChannelVolumeLinear(selector, linearLevel, duration) {
++		return this._setLevel(selector, linearLevel, duration);
++	}
++
++	/**
++	* Look at metering data and adjust channel fader so that the level is of a certain loudness
++	* NOTE: This is not perceived loudness. Not very practical, but useful in a pinch?
++	*
++	* @param channel
++	* @param level
++	* @param duration
++	*/
++	async normaliseChannelTo(channel, level, duration) {
++		throw new Error("Not implemented yet");
++	}
++};
++//#endregion
++//#region src/lib/types/FileListItem.ts
++var FileListItem_exports = /* @__PURE__ */ __exportAll({});
++//#endregion
++export { Discovery as a, PacketHeader as c, createServer as i, MessageCode as l, Client as n, ConnectionState as o, parseChannelString as r, CByte as s, FileListItem_exports as t, Channel as u };
+diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
+index eae9828..ddeb88c 100644
+--- a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
++++ b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
+@@ -856,9 +856,13 @@ function createPacket(messageCode, data, customA, customB) {
+ 		0
+ 	]);
+ 	if (connIdentity.length !== 4) throw Error("connIdentity");
++
+ 	const lengthLE = toShort(messageCode.length + connIdentity.length + data.length);
++
+ 	if (lengthLE.length !== 2) throw Error("lengthLE");
++
+ 	const b = Buffer.alloc(PacketHeader.length + lengthLE.length + messageCode.length + connIdentity.length + data.length);
++	
+ 	let cursor = 0;
+ 	b.fill(PacketHeader);
+ 	b.fill(lengthLE, cursor += PacketHeader.length);
+@@ -1050,24 +1054,63 @@ let counts;
+ function setCounts(channelCount) {
+ 	counts = channelCount;
+ }
++
++
++/**
++ * Parse Channel String
++ * @author Max Miller
++ * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++ * @param {boolean} whitelist 
++ * @returns {String} channel selection string for SL API
++ */
+ function parseChannelString(selector, whitelist) {
+ 	let { type, channel } = selector;
+ 	const { mixType, mixNumber } = selector;
++	
++	// Check if there's a valid mix type flag to select in the specific channel
+ 	if (counts && mixType) {
+-		if (!mixNumber || mixNumber < 1) throw new Error("Invalid mix channel provided");
+-		switch (mixType) {
+-			case "AUX":
+-			case "FX":
+-				if (!(mixNumber <= counts[mixType])) throw new Error("Invalid mix channel provided");
+-				break;
+-			default: throw new Error("Invalid mix type provided");
++		if (!mixNumber || mixNumber < 1) {
++			throw new Error("Invalid mix channel provided");
++			return "";
+ 		}
++		
++		if (mixType == "AUX" || mixType == "FX") {
++			if (mixNumber > counts[mixType]) {
++				throw new Error("Invalid mix channel provided");
++				return "";
++			}
++			// Valid AUX or FX mix selection
++		}
++		// Allow Selecting a line channel if the channel type is a DCA
++		else if (type == "DCA" && mixType == "LINE") {
++			// Allow
++		}
++		else {
++			throw new Error("Unexpected mix type");
++		}
++	}
++
++	// Check if type is valid
++	if (!Object.keys(Channel).includes(type)) {
++		console.log(type);
++		throw new Error("Invalid channel type provided")
+ 	}
+-	if (!Object.keys(Channel).includes(type)) throw new Error("Invalid channel type provided");
+-	if (["MAIN", "TALKBACK"].includes(type)) channel = 1;
++
++	// If selecting MAIN or TALKBACK, force channel to be 1
++	if (["MAIN", "TALKBACK"].includes(type)) {
++		channel = 1;
++	}
++
++
+ 	const oldChannel = channel;
+ 	channel = Math.trunc(channel);
+-	if (!(channel > 0) || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) throw new Error("Invalid channel provided");
++
++	// Make sure channel actually exsists inside of the type
++	if (channel <= 0 || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) {
++		throw new Error("Invalid channel provided");
++	}
++
++	// return the selector for the channel
+ 	return `${Channel[type]}/ch${channel}`;
+ }
+ //#endregion
+@@ -1540,6 +1583,7 @@ var Client = class {
+ 		return this._writeBytes(createPacket(...params));
+ 	}
+ 	async _writeBytes(bytes) {
++		console.log(bytes)
+ 		return new Promise((resolve) => {
+ 			this.conn.write(bytes, null, (resp) => {
+ 				resolve(resp);
+@@ -1626,7 +1670,7 @@ var Client = class {
+ 	* @private
+ 	*/
+ 	_getMuteTargetString(selector) {
+-		let targetString = parseChannelString(selector);
++		let targetString = parseChannelString(selector);  // "{Channel[type]}/ch{channel}"
+ 		if (selector.mixType) targetString += `/assign_${selector.mixType.toLowerCase()}${selector.mixNumber}`;
+ 		else targetString += "/mute";
+ 		return targetString;
+@@ -1679,6 +1723,86 @@ var Client = class {
+ 	getColour(...args) {
+ 		return this.getColor.apply(this, args);
+ 	}
++
++	/**
++	 * Set Channel Name
++	 * @author Max Miller
++	 * @param {ChannelSelector} selector 
++	 * @param {String} name 
++	 */
++	setName(selector, name) {
++		this._sendPacket(
++			MessageCode.ParamString,
++			Buffer.from(
++				`${parseChannelString(selector)}/name\0\0\0${name}\0`
++			)
++		);
++	}
++
++	/**
++	 * Assign DCA
++	 * @author Max Miller
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @param {Int[]} assign_chans 
++	 * @param {Int[]}
++	 */
++	assign_dca(selector, assign_chans, controlled_chans = null) {
++		if (selector.type !== "DCA") {
++			throw new Error("Invalid Channel Type!")
++			return;
++		}
++
++		const targetChanString = parseChannelString(selector);
++
++		if (controlled_chans == null) {
++			controlled_chans = Array.from({ length: this.channelCounts["LINE"] }, (_, index) => index + 1);
++		} 
++		
++		console.log(`Assigning DCA #${selector.channel} to channels ${assign_chans}`);
++
++		// Loop through every line in the DCA
++		for (let n of controlled_chans) {
++			const path = `${targetChanString}/line${n}`;
++			const cur_state = this.state.get(path);
++
++			console.log(`path: ${path}, in assign chans ${assign_chans}: ${assign_chans.includes(n)}`);
++			
++			// If it's in assigned channels, we should assign it
++			if (assign_chans.includes(n)) {
++				console.log(`Adding chan #${n}`);
++				// const bytes = Buffer.concat([Buffer.from(targetChanString), Buffer.from('2f6c696e653100000000000000', 'hex')]);
++
++				if (cur_state !== 1 || true) {
++					// this._sendPacket(MessageCode.ParamValue, bytes, {customA: 'j', customB: 'e'});
++					this._sendPacket(
++						MessageCode.ParamValue,
++						Buffer.concat([
++							Buffer.from(`${path}\0\0\0`),
++							toFloat(1.0)
++						])
++					);
++				}
++			}
++			// Otherwise unassign it
++			else if (cur_state !== 0) {
++				console.log(`Removing chan #${n}`);
++				// this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetChanString + "\0\0\0")]));
++				this._sendPacket(
++					MessageCode.ParamValue,
++					Buffer.concat([
++						Buffer.from(`${path}\0\0\0`),
++						toFloat(0.0)
++					])
++				);
 +			}
 +			
 +			// Otherwise it must already be correct
@@ -284,7 +2276,7 @@ index eae9828..54d99ea 100644
  	/**
  	* For a mono channel, the pan value is the pan value from 0 (hard left) to 100 (hard right)
  	* For a stereo channel, the pan value is the width from 0 to 100 (stereo)
-@@ -1705,27 +1818,52 @@ var Client = class {
+@@ -1705,27 +1829,52 @@ var Client = class {
  	setLink(selector, link) {
  		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${parseChannelString(selector)}/link\x00\x00\x00`), toBoolean(link)]));
  	}
@@ -347,7 +2339,7 @@ index eae9828..54d99ea 100644
  	_setLevel(selector, targetLevel, duration = 0) {
  		const targetString = this._getLevelString(selector);
  		const assertReturn = () => {
-@@ -1751,6 +1889,7 @@ var Client = class {
+@@ -1751,6 +1900,7 @@ var Client = class {
  			});
  		});
  	}
@@ -355,7 +2347,7 @@ index eae9828..54d99ea 100644
  	/**
  	* Set volume (decibels)
  	*
-@@ -1760,6 +1899,7 @@ var Client = class {
+@@ -1760,6 +1910,7 @@ var Client = class {
  	async setChannelVolumeLogarithmic(selector, decibel, duration) {
  		return this._setLevel(selector, logVolumeToLinear(decibel), duration);
  	}
@@ -363,7 +2355,7 @@ index eae9828..54d99ea 100644
  	/**
  	* Set volume (pseudo intensity)
  	*
-@@ -1772,6 +1912,7 @@ var Client = class {
+@@ -1772,6 +1923,7 @@ var Client = class {
  	async setChannelVolumeLinear(selector, linearLevel, duration) {
  		return this._setLevel(selector, linearLevel, duration);
  	}

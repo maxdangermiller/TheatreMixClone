@@ -1,14 +1,19 @@
+import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import Test from './components/Test';
 import ClientManager from './components/ClientManager';
-import Editor from './components/Editor2';
+import Editor from './components/Editor';
 
 const App = () => {
+	const [showData, setShowData] = useState(null);
+
+	useEffect(() => {
+		console.log("[renderer.jsx] Show Data DEBUG Log: ", showData);
+	}, [showData])
+
 	return <div>
-		<ClientManager />
-		<Test />
+		<ClientManager showData={showData} setShowData={setShowData}/>
 		<br />
-		<Editor />
+		<Editor showData={showData} setShowData={setShowData}/>
 	</div>
 }
 

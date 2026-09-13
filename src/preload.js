@@ -23,3 +23,8 @@ contextBridge.exposeInMainWorld('showApi', {
 	getShow: () =>
 		ipcRenderer.invoke('show:get')
 });
+
+contextBridge.exposeInMainWorld('electronAPI', {
+	openFile: () => ipcRenderer.invoke('dialog:openFile')
+
+});
