@@ -6,7 +6,13 @@ module.exports = {
 		asar: {
 			unpack: "*.{node,dll}",
 		},
-		icon: '/build/icons', // .icns will be inferred
+		/*
+		icon: [
+			'/build/icons/tmps.icns',
+			'/build/icons/tmps.icon'
+		],
+		*/
+		icon: './build/icons/tmps',
 		osxSign: false, // Disables the blocking macOS keychain lookup
 		ignore: [/node_modules\/(?!(better-sqlite3|bindings|file-uri-to-path)\/)/],
 		ignore: [
@@ -46,7 +52,11 @@ module.exports = {
 		},
 		*/
 		{
-		name: '@electron-forge/maker-dmg'
+			name: '@electron-forge/maker-dmg',
+			platforms: ['darwin'],
+			config: {
+				icon: './build/icons/tmps.icns'
+			}
 		}
 	],
 	plugins: [

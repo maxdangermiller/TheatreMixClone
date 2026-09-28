@@ -34,7 +34,8 @@
     "electron": "43.3.0",
     "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "vite-plugin-svgr": "^5.2.0"
   },
   "dependencies": {
     "@featherbear/presonus-studiolive-api": "^1.8.0",

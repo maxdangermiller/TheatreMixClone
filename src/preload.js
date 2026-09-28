@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('showApi', {
 });
 
 contextBridge.exposeInMainWorld('electronAPI', {
-	openFile: () => ipcRenderer.invoke('dialog:openFile')
+	openFile: () => ipcRenderer.invoke('dialog:openFile'),
+	// Setup a listener that React/Vue can hook into
+  	onOpenFile: (callback) => ipcRenderer.on('file-opened', (event, filePath) => callback(filePath)),
+	// Clean up listener to prevent memory leaks
+	removeOpenFileListener: () => ipcRenderer.removeAllListeners('file-opened')
 
 });

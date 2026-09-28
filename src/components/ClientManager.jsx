@@ -20,15 +20,6 @@ const ClientManager = ({showData, setShowData}) => {
 	const [ consoleIP, setConsoleIP ] = useState("169.254.4.171");
 	const [ valid, setValid ] = useState(false);
 	const [ options, setOptions] = useState([]);
-
-
-	const load_show = async (path) => {
-		if (path === "") {
-			console.error("[ClientManager::load_show]: File Path cannot be blank... silly goose!");
-		}
-
-		setShowData(await window.showApi.loadShow(path));
-	}
 	
 
 	/**
@@ -83,8 +74,6 @@ const ClientManager = ({showData, setShowData}) => {
 				<h2 key={index}>{option}</h2>
 			))
 		}
-
-		<FileDialogue load_show={load_show} />
 	</>;
 }
 

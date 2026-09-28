@@ -4,19 +4,66 @@ import { is_ip_valid, ip_regex } from '../utils/ip_tools.js';
 import { cue_sorter } from '../utils/sorters.js';
 import { get_DCA_label } from './utils/cue_utils.js';
 
+import { 
+	HEADER_COLOR, ACTIVE_CUE_COLOR, BORDER_COLOR, 
+	DEFAULT_ROW_COLOR, TEXT_COLOR,
+	get_cue_color
+} from './utils/colors.jsx';
 
-// const mixers = await window.presonus.discover();
 
-// console.log(mixers);
+const CONTAINER_STYLE = {
+	height: "80vh",
+	width: "100%",
+	overflowX: 'auto',
+	overflowY: 'auto',
+	padding: "10px"
+}
+
+const TABLE_STYLE = {
+	width: '100%', 
+	borderCollapse: 'collapse', 
+	textAlign: 'left', 
+	color: TEXT_COLOR,
+	position: 'sticky',
+	fontFamily: 'Arial'
+}
+
+const HEADER_ITEM_STYLE = {
+	padding: '6px',
+	border: '2px solid ' + BORDER_COLOR,
+	borderBottom: '4px solid ' + BORDER_COLOR,
+	textAlign: 'center',
+}
+
+const LABEL_HEADER_STYLE = {
+	...HEADER_ITEM_STYLE,
+	width: '10%!important'
+}
 
 
-// const show = await window.showApi.loadShow('./HaydenTest.tmix');
-// const show = await window.showApi.loadShow('./LionKingKidsV2.db');
+const DCA_HEADER_STYLE = {
+	...HEADER_ITEM_STYLE,
+	minWidth: '50px'
+}
 
-const HEADER_COLOR = "#f2f2f2"
-const BORDER_COLOR = "#dddddd"
-const ACTIVE_CUE_COLOR = "#626198"
-const REG_CUE_COLOR = "#ffffff"
+const ROW_ITEM_STYLE = {
+	padding: '4px', 
+	border: '1px solid ' + BORDER_COLOR,
+	fontSize: 22,
+	maxHeight: '100%',
+	overflowX: 'auto',
+	whiteSpace: 'nowrap'
+}
+
+const CUE_ITEM_STYLE = {
+	...ROW_ITEM_STYLE,
+	textAlign: 'center'
+}
+
+const DCA_ITEM_STYLE = {
+	...ROW_ITEM_STYLE,
+	textAlign: 'center'
+}
 
 
 /**
@@ -134,22 +181,22 @@ const Editor = ({showData, setShowData}) => {
 	}, [cue_index]);
 
 
-	return <>
-		<table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+	return <div style={CONTAINER_STYLE}>
+		<table style={TABLE_STYLE}>
 		
 			{/* Table Header */}
 			<thead>
 			<tr style={{ backgroundColor: HEADER_COLOR }}>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>#</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>Label</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 1</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 2</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 3</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 4</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 5</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 6</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 7</th>
-				<th style={{ padding: '10px', borderBottom: '2px solid ' + BORDER_COLOR }}>DCA 8</th>
+				<th style={HEADER_ITEM_STYLE}>#</th>
+				<th style={LABEL_HEADER_STYLE}>Label</th>
+				<th style={DCA_HEADER_STYLE}>DCA 1</th>
+				<th style={DCA_HEADER_STYLE}>DCA 2</th>
+				<th style={DCA_HEADER_STYLE}>DCA 3</th>
+				<th style={DCA_HEADER_STYLE}>DCA 4</th>
+				<th style={DCA_HEADER_STYLE}>DCA 5</th>
+				<th style={DCA_HEADER_STYLE}>DCA 6</th>
+				<th style={DCA_HEADER_STYLE}>DCA 7</th>
+				<th style={DCA_HEADER_STYLE}>DCA 8</th>
 			</tr>
 			</thead>
 			
@@ -159,26 +206,27 @@ const Editor = ({showData, setShowData}) => {
 			{getCues().map((cue, index) => (
 				<tr 
 					key={index} 
-					style={{backgroundColor: index === cue_index ? ACTIVE_CUE_COLOR : REG_CUE_COLOR}}
+					style={{
+						backgroundColor: index === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(cue.colour),
+					}}
 					ref={(el) => (rowRefs.current[index] = el)}
 				>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{cue.number}.{cue.point}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{cue.name}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 1)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 2)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 3)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 4)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 5)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 6)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 7)}</td>
-					<td style={{ padding: '10px', borderBottom: '1px solid ' + BORDER_COLOR }}>{get_DCA_label(showData, cue, 8)}</td>
+					<td style={CUE_ITEM_STYLE}>{cue.number}.{cue.point}</td>
+					<td style={ROW_ITEM_STYLE}>{cue.name}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 1)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 2)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 3)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 4)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 5)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 6)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 7)}</td>
+					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 8)}</td>
 				</tr>
 			))}
 			</tbody>
 
 		</table>
-		<button onClick={addCue}>Add</button>
-	</>;
+	</div>;
 }
 
 export default Editor;
