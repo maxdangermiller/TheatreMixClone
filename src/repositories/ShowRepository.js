@@ -6,6 +6,7 @@ import Cue from '../models/Cue';
 import Ensemble from '../models/Ensemble';
 import ShowFile from '../models/ShowFile';
 import Profile from '../models/Profile';
+import Config from '../models/Config';
 
 class ShowRepository {
 
@@ -17,35 +18,21 @@ class ShowRepository {
 
         const show = new ShowFile();;
 
-        show.actors =
-            this.db.all('SELECT * FROM actors')
-                .map(x => new Actor(x));
+        show.actors = this.db.all('SELECT * FROM actors').map(x => new Actor(x));
 
-        show.actorGroups =
-            this.db.all('SELECT * FROM actorGroups')
-                .map(x => new ActorGroup(x));
+        show.actorGroups = this.db.all('SELECT * FROM actorGroups').map(x => new ActorGroup(x));
 
-        show.actorProfiles =
-            this.db.all('SELECT * FROM actorProfiles')
-                .map(x => new ActorProfile(x));
+        show.actorProfiles = this.db.all('SELECT * FROM actorProfiles').map(x => new ActorProfile(x));
 
-        show.positions =
-            this.db.all('SELECT * FROM positions')
-                .map(x => new Position(x));
+        show.positions = this.db.all('SELECT * FROM positions').map(x => new Position(x));
 
-        show.profiles =
-            this.db.all('SELECT * FROM profiles').map(x => new Profile(x));
+        show.profiles = this.db.all('SELECT * FROM profiles').map(x => new Profile(x));
 
-        show.ensembles =
-            this.db.all('SELECT * FROM ensembles')
-                .map(x => new Ensemble(x));
+        show.ensembles = this.db.all('SELECT * FROM ensembles').map(x => new Ensemble(x));
 
-        show.cues =
-            this.db.all('SELECT * FROM cues')
-                .map(x => new Cue(x));
+        show.cues = this.db.all('SELECT * FROM cues').map(x => new Cue(x));
 
-        const configRows =
-            this.db.all('SELECT * FROM config');
+        const configRows = this.db.all('SELECT * FROM config').map(x => new Config(x));
 
         show.config = Object.fromEntries(
             configRows.map(row => [

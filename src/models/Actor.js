@@ -1,13 +1,21 @@
 import BaseModel from './BaseModel';
 
 class Actor extends BaseModel {
-    /*
-    id;
-    channel;
-    name;
-    order;
-    active;
-    */
+    /** @type {Number} */
+    // id;
+
+    /** @type {Number} */
+    // channel;
+
+    /** @type {String} */
+    // name;
+
+    /** @type {Number} */
+    // order;
+
+    /** @type  */
+    // active;
+
 }
 
 export default Actor;

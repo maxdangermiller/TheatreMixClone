@@ -1,15 +1,20 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 
 import { Client, Discovery } from '@featherbear/presonus-studiolive-api';
+import {getShow} from './showManager.js';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
 
-/*
-import DCA from '../types/dca';
-import Cue from '../types/cue';
-*/
+const INACTIVE_LEVEL = -50
+const INACTIVE_MIN_TIME = 100;
+const CLIPPING_LEVEL = 9;
+const INACTIVE_COLOR = "#121f75";
+const ACTIVE_COLOR = "#ffffff";
+const CLIPPING_COLOR = "#850707";
+const LIVE_COLOR = "#b08e07";
 
-const fs = require('node:fs/promises');
+
+let low_volume_channels = {};
 
 // Global Presonus Client Object
 /** @type {Client} */
@@ -21,6 +26,7 @@ const CONTROLLED_LINES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 /**
  * Handle Presonus Discovery
  * @returns {Promise} discovery Info
+ * @async
  */
 const discover = async () => {
 	const discovery = new Discovery();
@@ -41,15 +47,23 @@ const discover = async () => {
 	});
 }
 
+const init_low_vol_arr = () => {
+	for (let i of CONTROLLED_LINES) {
+		low_volume_channels[i] = 0;
+	}
+}
+
 
 /**
  * Connect to Console
  * @param {Event} _event 
  * @param {String} host 
- * @param {int} port 
+ * @param {int} port
+ * @async
  */
 const connect = async (_event, {host, port}) => {
-	console.log("[SOUND:connect]: Connecting to Sound Board at ip address: " + host + " on port " + port + ".")
+	console.log(`[SOUND:connect]: Connecting to Sound Board at ip address: ${host} on port ${port}.`);
+
 	presonusClient = new Client({host: host, port: port}, {autoreconnect: true, logLevel: "debug"});
 
 	presonusClient.on('connected', () => {
@@ -63,7 +77,10 @@ const connect = async (_event, {host, port}) => {
 		console.log("Closed!")
 	})
 
+	init_low_vol_arr();
+
 	presonusClient.on('meter', handleMeteringData);
+	presonusClient.meterSubscribe()
 	
 	
 	await presonusClient.connect().then(() => {
@@ -76,78 +93,83 @@ const connect = async (_event, {host, port}) => {
 }
 
 
+// #region Metering Type Definitions
 /**
- * 
- * @param {Meter} metering 
+ * @typedef ChannelStrip
+ * @property {number[]} stripA
+ * @property {number[]} stripB
+ * @property {number[]} stripC
+ * @property {number[]} stripD
+ * @property {number[]} stripE
+ */
+
+/**
+ * @typedef AuxStrip
+ * @property {number[]} stripA
+ * @property {number[]} stripB
+ * @property {number[]} stripC
+ * @property {number[]} stripD
+ */
+
+/**
+ * @typedef MainChannelStrip
+ * @property {number[]} stageA
+ * @property {number[]} stageB
+ * @property {number[]} stageC
+ * @property {number[]} stageD
+ */
+
+/**
+ * @typedef FXReturnStrip
+ * @property {number[]} input
+ * @property {number[]} stripA
+ * @property {number[]} stripB
+ * @property {number[]} stripC
+ */
+
+/**
+ * @typedef MeterData
+ * @property {number[]} input
+ * @property {number[]} mainMixFaders
+ * @property {number} main
+ * @property {ChannelStrip} channelStrip
+ * @property {AuxStrip} aux_chstrip
+ * @property {MainChannelStrip} main_chstrip
+ * @property {AuxStrip} fx_chstrip
+ * @property {FXReturnStrip} fxreturn_strip
+ */
+
+// #endregion
+
+/**
+ * Handle Metering Data
+ * @param {MeterData} metering 
+ * @async
  */
 const handleMeteringData = async (metering) => {
+	// Loop through all inputs and read volume
+	for (let i of CONTROLLED_LINES) {
+		let lvl = metering.input[i];
 
-}
-
-/**
- * Set DCA on console
- * @deprecated
- * @param {Event} _event
- * @param {DCA} dca_object 
-*/
-/*
-const set_dca = async (_event, {dca_object}) => {
-
-	// TODO: Remove
-	// /*
-	let cue1 = new Cue()
-	cue1.setDCA(new DCA(1, [1], "P1", 0, "#c92222"));
-	cue1.setDCA(new DCA(2, [2], "P2", -10, "#c92222"));
-	cue1.setDCA(new DCA(3, [3], "P3", -20, "#c92222"));
-	cue1.setDCA(new DCA(4, [4], "P4", -10, "#c92222"));
-	cue1.setDCA(new DCA(5, [5], "P5", 0, "#c92222"));
-	cue1.setDCA(new DCA(6, [6], "P6", -10, "#c92222"));
-	cue1.setDCA(new DCA(7, [7], "P7", -20, "#c92222"));
-	cue1.setDCA(new DCA(8, [8], "P8", -10, "#c92222"));
-
-	dca_object = cue1.getDCA(1);
-	
-	console.log("[SOUND:set_dca]: DCA Info: ", dca_object)
-	console.log("[SOUND:set_dca]: Setting DCA #", dca_object.number);
-	
-	if (presonusClient === null) {
-		throw new Error("Client has not yet been connected!");
-		return;
-	}
-	
-	console.log("[SOUND:set_dca]: DCA Info: ", typeof(dca_object))
-	const selector = dca_object.get_selector();
-	console.log(dca_object.get_selector());
-
-	presonusClient.setColor(selector, dca_object.color, 100)
-	presonusClient.setChannelVolumeLogarithmic(selector, dca_object.level, 0);
-	presonusClient.setName(selector, dca_object.name);
-
-	for (const line in CONTROLLED_LINES) {
-		const line_sel = {
-			type: 'LINE',
-			channel: line,
-			mixType: 'DCA',
-			mixNumber: dca_object.number
-		}
-		
-		if (line in dca_object.channels) {
-			presonusClient.unmute(line_sel);
-			// TODO: Make the volume on each DCA adjustable?
-			// Set the volume to unity
-			presonusClient.setChannelVolumeLogarithmic(line_sel, 0);
+		if (lvl <= INACTIVE_LEVEL) {	
+			if (low_volume_channels[i] >= INACTIVE_MIN_TIME) {
+				presonusClient.setColor({type: "LINE", channel: i}, INACTIVE_COLOR);
+			} else {
+				low_volume_channels[i]++;
+			}
 		}
 		else {
-			presonusClient.mute();
+			low_volume_channels[i] = 0;
+			presonusClient.setColor({type: "LINE", channel: i}, ACTIVE_COLOR);
 		}
 	}
 }
-*/
 
 /**
  * Write Cue - NEW
  * @param {Event} _event 
  * @param {Cue} cue_object 
+ * @async
  */
 const write_cue = async (_event, {cue_object}) => {
 
@@ -296,7 +318,14 @@ const write_cue = async (_event, {cue_object}) => {
 	// filtergroup/ch1/mute_aux* - 0 or 1
 	// filtergroup/ch1/aux* - volume 0.0 - 1.0
 	
+	
+}
 
+const set_channels = async () => {
+	const show = getShow();
+	for (ch of show.profiles) {
+		presonusClient.setName({type: 'LINE', channel: i}, ch.label);
+	}
 }
 
 export {discover, connect, write_cue};
