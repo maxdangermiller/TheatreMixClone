@@ -15,7 +15,7 @@ import ShowFile from '../models/ShowFile';
  * Client Manager
  * @param {ClientManagerProps} params 
  */
-const ClientManager = ({showData, setShowData}) => {
+const ClientManager = () => {
 
 	const [ consoleIP, setConsoleIP ] = useState("169.254.4.171");
 	const [ valid, setValid ] = useState(false);

@@ -36,6 +36,7 @@ const App = () => {
 	return <>
 		<MenuBar load_show={load_show}/>
 		<Editor showData={showData} setShowData={setShowData}/>
+		<ClientManager />
 	</>
 }
 
