@@ -1,7 +1,7 @@
 {
   "name": "TheatreMixClone",
   "productName": "theatre-mix-clone",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "My Electron application description",
   "main": ".vite/build/main.js",
   "private": true,
@@ -44,6 +44,7 @@
     "electron-squirrel-startup": "^1.0.1",
     "process": "^0.11.10",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router": "^8.4.0"
   }
 }

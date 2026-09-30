@@ -9,6 +9,7 @@ const PURPLE_HIGHLIGHT_COLOR = "#664d77";
 const TEXT_COLOR = "#ffffff";
 const ACTIVE_CUE_COLOR = "#626198";
 const BORDER_COLOR = "#111111";
+const SELECTED_COLOR = "#005BD9";
 
 const get_cue_color = (index) => {
     switch(index) {
@@ -35,5 +36,6 @@ export {
     YELLOW_HIGHLIGHT_COLOR, GREEN_HIGHLIGHT_COLOR,
     BLUE_HIGHLIGHT_COLOR, PURPLE_HIGHLIGHT_COLOR, 
     TEXT_COLOR, ACTIVE_CUE_COLOR, BORDER_COLOR,
+    SELECTED_COLOR,
     get_cue_color
 }

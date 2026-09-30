@@ -34,6 +34,18 @@ const discover = async () => {
 
 	console.log("[SOUND:discover]: Discovering PreSonous Consoles on the Network!")
 
+	/*
+	return [
+		{
+			name: "StudioLive 32 Hayden",
+			serial: "SD3E19010055",
+			ip: "169.254.4.171",
+			port: "53000",
+			timestamp: "Right now"
+		}
+	]
+	*/
+
 	return new Promise((resolve) => {
 		discovery.on('discover', (device) => {
 			devices.push(device);

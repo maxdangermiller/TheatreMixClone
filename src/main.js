@@ -26,8 +26,7 @@ ipcMain.handle('show:load', async (_, path) => { return loadShow(path); });
 
 ipcMain.handle('show:get', async () => { return getShow(); });
 
-ipcMain.handle('dialog:openFile', handle_open_file);
-
+ipcMain.handle('electronAPI:openFile', handle_open_file);
 
 
 if (started) {
@@ -49,15 +48,38 @@ const createWindow = () => {
 
 	if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
 		mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+		mainWindow.webContents.openDevTools();
 	} else {
 		mainWindow.loadFile(
 			path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
 		);
 	}
 
-	if (SHOW_CONSOLE) {
-		mainWindow.webContents.openDevTools();
-	}
+	// Intercept window.open calls from the React frontend
+	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+		// You can filter by URL if you only want to allow specific popups
+		if (url.includes('/popup')) {
+			return {
+				action: 'allow',
+				overrideBrowserWindowOptions: {
+					width: 800,
+					height: 600,
+					resizable: false,
+					minimizable: false,
+					maximizable: false,
+					frame: false, // Set to false for a frameless popup
+					title: 'Popup',
+					webPreferences: {
+						// Inherit or inject custom preloads if necessary
+						preload: path.join(__dirname, 'preload.js'), 
+					}
+				}
+			};
+		}
+		
+		// Deny external/unknown popups, or route them to the default browser
+		return { action: 'deny' };
+	});
 
 	setMainWindow(mainWindow);
 };

@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useRef } from "react";
 
 // https://www.svgrepo.com/collection/zest-interface-icons/
 import FileIcon from "../../assets/file.svg?react";
 import OpenFileIcon from "../../assets/open_file.svg?react";
+import EditIcon from "../../assets/edit.svg?react";
 
 const menu_bar_style = {
     backgroundColor: "#444444",
@@ -36,6 +37,12 @@ const svg_button_style = {
  * @param {MenuBarProps} params 
  */
 const MenuBar = ({load_show}) => {
+    const popupRef = useRef(null);
+
+
+    const handleNewFile = async () => {
+        
+    }
 
     const handleOpenFile = async () => {
         // Access the API exposed by the preload script
@@ -46,13 +53,31 @@ const MenuBar = ({load_show}) => {
         }
     };
 
+    const handleOpenSettings = () => {
+        // Prevent duplicate windows if already open
+        if (popupRef.current && !popupRef.current.closed) {
+            popupRef.current.focus();
+            return;
+        }
+
+        // Open the new window via a targeted path matching your React routing
+        popupRef.current = window.open(
+            '/popup', 
+            'ReactPopupName', 
+            'width=600,height=800' // Merged into overrideBrowserWindowOptions by Electron
+        );
+    }
+
     return (
         <div style={menu_bar_style}>
-            <button onClick={handleOpenFile} aria-label="new-file" style={svg_button_style}>
+            <button onClick={handleNewFile} aria-label="new-file" style={svg_button_style}>
                 <FileIcon style={menu_icon_style}/>
             </button>
-            <button onClick={handleOpenFile} aria-label="new-file" style={svg_button_style}>
+            <button onClick={handleOpenFile} aria-label="open-file" style={svg_button_style}>
                 <OpenFileIcon style={menu_icon_style}/>
+            </button>
+            <button onClick={handleOpenSettings} aria-label="settings" style={svg_button_style}>
+                <EditIcon style={menu_icon_style}/>
             </button>
         </div>
     );
