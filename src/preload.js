@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   	onOpenFile: (callback) => ipcRenderer.on('file-opened', (event, filePath) => callback(filePath)),
 	removeOpenFileListener: () => ipcRenderer.removeAllListeners('file-opened'),
+	
+	openErrorDialog: 
+		msg => ipcRenderer.invoke('presonus:openErrorDialog', msg),
 
 
 });

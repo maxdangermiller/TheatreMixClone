@@ -1,0 +1,351 @@
+{
+    "actors": [
+        {
+            "id": 1,
+            "channel": 1,
+            "name": "Max Miller",
+            "order": 0,
+            "active": 1
+        }
+    ],
+    "actorGroups": [],
+    "actorProfiles": [
+        {
+            "actor": 1,
+            "profile": 1,
+            "data": ""
+        },
+        {
+            "actor": 1,
+            "profile": 21,
+            "data": ""
+        }
+    ],
+    "positions": [
+        {
+            "id": 0,
+            "name": "Centre Stage",
+            "shortName": "CS",
+            "delay": 0,
+            "pan": 0,
+            "buses": null
+        }
+    ],
+    "profiles": [
+        {
+            "id": 1,
+            "channel": 1,
+            "name": "Act 1 Ch 1",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 2,
+            "channel": 2,
+            "name": "Channel 2",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 3,
+            "channel": 3,
+            "name": "Channel 3",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 4,
+            "channel": 4,
+            "name": "Channel 4",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 5,
+            "channel": 5,
+            "name": "Channel 5",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 6,
+            "channel": 6,
+            "name": "Channel 6",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 7,
+            "channel": 7,
+            "name": "Channel 7",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 8,
+            "channel": 8,
+            "name": "Channel 8",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 9,
+            "channel": 9,
+            "name": "Channel 9",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 10,
+            "channel": 10,
+            "name": "Channel 10",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 11,
+            "channel": 11,
+            "name": "Channel 11",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 12,
+            "channel": 12,
+            "name": "Channel 12",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 13,
+            "channel": 13,
+            "name": "Channel 13",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 14,
+            "channel": 14,
+            "name": "Channel 14",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 15,
+            "channel": 15,
+            "name": "Channel 15",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 16,
+            "channel": 16,
+            "name": "Channel 16",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 17,
+            "channel": 17,
+            "name": "Channel 17",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 18,
+            "channel": 18,
+            "name": "Channel 18",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 19,
+            "channel": 19,
+            "name": "Channel 19",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 20,
+            "channel": 20,
+            "name": "Channel 20",
+            "label": null,
+            "default": 1,
+            "data": ""
+        },
+        {
+            "id": 21,
+            "channel": 1,
+            "name": "Act 1 Ch 2",
+            "label": null,
+            "default": 0,
+            "data": ""
+        }
+    ],
+    "ensembles": [
+        {
+            "id": 2,
+            "name": "Male",
+            "channels": "",
+            "channelProfiles": ""
+        },
+        {
+            "id": 3,
+            "name": "Female",
+            "channels": "",
+            "channelProfiles": ""
+        }
+    ],
+    "cues": [
+        {
+            "number": 1,
+            "point": 0,
+            "name": "New Cue",
+            "dca01Channels": "1",
+            "dca02Channels": "8,2",
+            "dca03Channels": "3",
+            "dca04Channels": "4",
+            "dca05Channels": "",
+            "dca06Channels": "",
+            "dca07Channels": "",
+            "dca08Channels": "",
+            "dca01Label": null,
+            "dca02Label": null,
+            "dca03Label": null,
+            "dca04Label": null,
+            "dca05Label": null,
+            "dca06Label": null,
+            "dca07Label": null,
+            "dca08Label": null,
+            "channelPositions": "",
+            "channelProfiles": "",
+            "fxMutes": "",
+            "channelFX": "",
+            "snippets": "",
+            "qLabCue": "",
+            "channelLevels": "",
+            "scenes": "",
+            "colour": 1,
+            "scenePoints": "",
+            "skip": 0,
+            "dca09Channels": "",
+            "dca09Label": null,
+            "dca10Channels": "",
+            "dca10Label": null,
+            "dca11Channels": "",
+            "dca11Label": null,
+            "dca12Channels": "",
+            "dca12Label": null
+        },
+        {
+            "number": 2,
+            "point": 0,
+            "name": "New Cue",
+            "dca01Channels": "1",
+            "dca02Channels": "6",
+            "dca03Channels": "7",
+            "dca04Channels": "8",
+            "dca05Channels": "",
+            "dca06Channels": "",
+            "dca07Channels": "",
+            "dca08Channels": "",
+            "dca01Label": null,
+            "dca02Label": null,
+            "dca03Label": null,
+            "dca04Label": null,
+            "dca05Label": null,
+            "dca06Label": null,
+            "dca07Label": null,
+            "dca08Label": null,
+            "channelPositions": "",
+            "channelProfiles": "1=21",
+            "fxMutes": "",
+            "channelFX": "",
+            "snippets": "",
+            "qLabCue": "",
+            "channelLevels": "",
+            "scenes": "",
+            "colour": 3,
+            "scenePoints": "",
+            "skip": 0,
+            "dca09Channels": "",
+            "dca09Label": null,
+            "dca10Channels": "",
+            "dca10Label": null,
+            "dca11Channels": "",
+            "dca11Label": null,
+            "dca12Channels": "",
+            "dca12Label": null
+        }
+    ],
+    "config": {
+        "targetConsole": "X32",
+        "designer": "Max Miller",
+        "venue": "Hayden",
+        "dcas": "1,2,3,4,5,6,7,8",
+        "channels": "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
+        "backupChannels": "",
+        "fxAssigns": "",
+        "fxMutes": "",
+        "defaultFX": "-1",
+        "snippetRecall": "0",
+        "fxBusMap": "1=13,2=14,3=15,4=16",
+        "buttonMap": "0=12,1=11",
+        "muteButtonMap": "",
+        "muteButtonAssignKeys": "",
+        "profileSchemaVersion": "2",
+        "qLabCues": "0",
+        "consoleModel": "",
+        "consoleVersion": "",
+        "consoleIP": "",
+        "consoleMAC": "",
+        "autoConnect": "0",
+        "enableChannelMonitoring": "1",
+        "gangLR": "0",
+        "gangLRChannels": "",
+        "gangLRName": "",
+        "gangLRColour": "",
+        "activeChannelHighlight": "0",
+        "cueZeroSnippets": "",
+        "minVersion": "3.0",
+        "spareBackup": "0",
+        "labelLR": "0",
+        "labelTargetBus": "1000",
+        "consoleMuteDCAUnassign": "1",
+        "qLabPasscode": "",
+        "suppressDCAMuteBackupSwitch": "0",
+        "channelLevels": "0",
+        "cueZeroResetLevels": "0",
+        "sceneRecall": "0",
+        "cueZeroScenes": "",
+        "dimDCAFaders": "0",
+        "qLabSuppressBack": "0",
+        "qlclDyn1": "0",
+        "cueZeroScenePoints": "",
+        "dimDCAFadersSuppressColours": "0",
+        "selectOnSpill": "1",
+        "cueZeroActorLabels": "1",
+        "dawRemote": "0",
+        "dawIP": "127.0.0.1",
+        "dawPreRoll": "0"
+    }
+}

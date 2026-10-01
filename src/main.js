@@ -7,6 +7,7 @@ import {loadShow, getShow} from './main/showManager.js';
 
 import {handle_open_file} from './main/fileManager.js';
 import {MenuTemplate} from './main/menuManager.js';
+// import {open_dialog} from './main/dialog.js';
 
 import { getMainWindow, setMainWindow } from './main/windowManager.js';
 
@@ -27,6 +28,7 @@ ipcMain.handle('show:load', async (_, path) => { return loadShow(path); });
 ipcMain.handle('show:get', async () => { return getShow(); });
 
 ipcMain.handle('electronAPI:openFile', handle_open_file);
+// ipcMain.handle('electronAPI:openErrorDialog', (_, msg) => open_dialog(msg));
 
 
 if (started) {
@@ -46,6 +48,7 @@ const createWindow = () => {
 		},
 	});
 
+	
 	if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
 		mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
 		mainWindow.webContents.openDevTools();
@@ -57,8 +60,11 @@ const createWindow = () => {
 
 	// Intercept window.open calls from the React frontend
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+		console.log("Trying to open popup")
+
 		// You can filter by URL if you only want to allow specific popups
 		if (url.includes('/popup')) {
+			console.log("opening popup")
 			return {
 				action: 'allow',
 				overrideBrowserWindowOptions: {
@@ -68,10 +74,11 @@ const createWindow = () => {
 					minimizable: false,
 					maximizable: false,
 					frame: false, // Set to false for a frameless popup
-					title: 'Popup',
+					parent: mainWindow,
 					webPreferences: {
 						// Inherit or inject custom preloads if necessary
 						preload: path.join(__dirname, 'preload.js'), 
+						contextIsolation: true
 					}
 				}
 			};

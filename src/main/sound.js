@@ -4,8 +4,11 @@ import { Client, Discovery } from '@featherbear/presonus-studiolive-api';
 import {getShow} from './showManager.js';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
+import open_dialog from './dialog.js';
+import Actor from '../models/Actor.js';
+import Profile from '../models/Profile.js';
 
-const INACTIVE_LEVEL = -50
+const INACTIVE_LEVEL = 20;
 const INACTIVE_MIN_TIME = 100;
 const CLIPPING_LEVEL = 9;
 const INACTIVE_COLOR = "#121f75";
@@ -21,6 +24,9 @@ let low_volume_channels = {};
 let presonusClient = null; 
 
 const CONTROLLED_LINES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
+/** @type {Cue} */
+let current_cue = null;
 
 
 /**
@@ -59,6 +65,9 @@ const discover = async () => {
 	});
 }
 
+/**
+ * Initialize Low Volume Array
+ */
 const init_low_vol_arr = () => {
 	for (let i of CONTROLLED_LINES) {
 		low_volume_channels[i] = 0;
@@ -79,14 +88,17 @@ const connect = async (_event, {host, port}) => {
 	presonusClient = new Client({host: host, port: port}, {autoreconnect: true, logLevel: "debug"});
 
 	presonusClient.on('connected', () => {
-		console.log("Connected to the device!")
+		console.log("Connected to the device!");
+
+		init_channels();
 	})
 
 	presonusClient.on('reconnecting', () => {
 		console.log("Reconnecting!")
 	})
 	presonusClient.on('closed', () => {
-		console.log("Closed!")
+		console.log("Closed!");
+		open_dialog(`Console disconnected!\r\nYou will need to reconnect before it will start working again`);
 	})
 
 	init_low_vol_arr();
@@ -154,6 +166,29 @@ const connect = async (_event, {host, port}) => {
 // #endregion
 
 /**
+ * Get Cue Channels
+ * @return {Number[]} channels in cue
+ */
+const get_cue_channels = () => {
+	if (current_cue === null) { 
+		return [];
+	}
+
+	let arr = [];
+
+	arr.push(current_cue['dca01Channels'].split(","));
+	arr.push(current_cue['dca02Channels'].split(","));
+	arr.push(current_cue['dca03Channels'].split(","));
+	arr.push(current_cue['dca04Channels'].split(","));
+	arr.push(current_cue['dca05Channels'].split(","));
+	arr.push(current_cue['dca06Channels'].split(","));
+	arr.push(current_cue['dca07Channels'].split(","));
+	arr.push(current_cue['dca08Channels'].split(","));
+
+	return arr;
+}
+
+/**
  * Handle Metering Data
  * @param {MeterData} metering 
  * @async
@@ -161,19 +196,28 @@ const connect = async (_event, {host, port}) => {
 const handleMeteringData = async (metering) => {
 	// Loop through all inputs and read volume
 	for (let i of CONTROLLED_LINES) {
-		let lvl = metering.input[i];
+		let lvl = metering.input[i - 1];
 
 		if (lvl <= INACTIVE_LEVEL) {	
-			if (low_volume_channels[i] >= INACTIVE_MIN_TIME) {
+			if (low_volume_channels[i - 1] >= INACTIVE_MIN_TIME) {
 				presonusClient.setColor({type: "LINE", channel: i}, INACTIVE_COLOR);
 			} else {
-				low_volume_channels[i]++;
+				low_volume_channels[i - 1]++;
 			}
+			continue;
 		}
-		else {
-			low_volume_channels[i] = 0;
-			presonusClient.setColor({type: "LINE", channel: i}, ACTIVE_COLOR);
+
+		// Clear the low volume count
+		low_volume_channels[i - 1] = 0;
+
+		// If the channel is used in the current cue, set to live color
+		if (i in get_cue_channels()) {
+			presonusClient.setColor({type: "LINE", channel: i}, LIVE_COLOR);
+			continue;
 		}
+
+		// Otherwise set it to the active color
+		presonusClient.setColor({type: "LINE", channel: i}, ACTIVE_COLOR);
 	}
 }
 
@@ -227,6 +271,8 @@ const write_cue = async (_event, {cue_object}) => {
 		skip: 0
 	}
 	*/
+	
+	current_cue = cue_object;
 	
 	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
 
@@ -333,10 +379,68 @@ const write_cue = async (_event, {cue_object}) => {
 	
 }
 
-const set_channels = async () => {
+/**
+ * Get Profile in Show by channel number
+ * @param {Number} ch channel number
+ * @returns {Profile} TheatreMix Profile
+ */
+const get_profile = (ch) => {
 	const show = getShow();
-	for (ch of show.profiles) {
-		presonusClient.setName({type: 'LINE', channel: i}, ch.label);
+
+	for (let profile of show.profiles) {
+		if (profile.channel === ch && profile.default) {
+			return profile;
+		}
+	}
+	return null;
+}
+
+/**
+ * Get Actor by channel number
+ * @param {Number} ch channel number
+ * @returns {Actor} TheatreMix Actor
+ */
+const get_actor = (ch) => {
+	const show = getShow();
+
+	for (let actor of show.actors) {
+		if (actor.channel === ch && actor.active) {
+			return actor;
+		}
+	}
+	return null;
+}
+
+/**
+ * Initialize Channel Labels
+ */
+const init_channels = async () => {
+	const board_state = presonusClient.dumpState().internal.children;
+	const line_state = board_state.line.children;
+
+	for (let ch of CONTROLLED_LINES) {
+		// find default channel profile
+		const profile = get_profile(ch);
+
+		const label = profile.label === null ? profile.name : profile.label;
+
+		if (line_state[`ch${ch["channel"]}`].username != label) {
+			presonusClient.setName({type: 'LINE', channel: ch}, label);
+		}
+	}
+}
+
+const set_soundcheck_labels = async () => {
+	const board_state = presonusClient.dumpState().internal.children;
+	const line_state = board_state.line.children;
+
+	for (let ch of CONTROLLED_LINES) {
+		// Find default channel actor
+		const actor = get_actor(ch);
+
+		if (line_state[`ch${ch["channel"]}`].username != actor.name) {
+			presonusClient.setName({type: 'LINE', channel: ch["channel"]}, actor.name);
+		}
 	}
 }
 

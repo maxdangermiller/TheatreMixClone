@@ -55,6 +55,7 @@ module.exports = {
 			name: '@electron-forge/maker-dmg',
 			platforms: ['darwin'],
 			config: {
+				format: 'ULFO',
 				icon: './build/icons/tmps.icns'
 			}
 		}

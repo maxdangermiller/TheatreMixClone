@@ -62,8 +62,8 @@ const MenuBar = ({load_show}) => {
 
         // Open the new window via a targeted path matching your React routing
         popupRef.current = window.open(
-            '/popup', 
-            'ReactPopupName', 
+            '#/popup', 
+            'PopupModal', 
             'width=600,height=800' // Merged into overrideBrowserWindowOptions by Electron
         );
     }

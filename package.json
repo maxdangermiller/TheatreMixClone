@@ -1,7 +1,7 @@
 {
-  "name": "TheatreMixClone",
-  "productName": "theatre-mix-clone",
-  "version": "1.0.3",
+  "name": "PresonusTheatreMix",
+  "productName": "presonus-theatre-mix",
+  "version": "1.0.5",
   "description": "My Electron application description",
   "main": ".vite/build/main.js",
   "private": true,
@@ -46,5 +46,12 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.4.0"
+  },
+  "allowScripts": {
+    "dtrace-provider@0.8.8": true,
+    "electron-winstaller@5.4.4": true,
+    "fs-xattr@0.3.1": true,
+    "macos-alias@0.2.12": true,
+    "postinstall-postinstall@2.1.0": true
   }
 }
