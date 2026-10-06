@@ -25,19 +25,18 @@ module.exports = {
 		/^\/\.presonous/,   // Ignores editor configuration files
 		/node_modules\/(?!(better-sqlite3|bindings|file-uri-to-path)\/)/,   // Ignores raw module files
 		],
-	extraResource: [
-		// TODO: Remove
-		'./HaydenTest.tmix',    // Test File
-		'./LionKingKidsV2.db',  // Copy an external executable
-		],
 	},
 	rebuildConfig: {},
 	makers: [
-		/*
 		{
-		name: '@electron-forge/maker-squirrel',
-		config: {},
+			name: '@electron-forge/maker-squirrel',
+			config:  {
+				authors: 'Max Miller',
+				platforms: ['win32'],
+				description: 'An Electron app to allow TheatreMix to work on Presonus StudioLive consoles'
+			},
 		},
+		/*
 		{
 		name: '@electron-forge/maker-zip',
 		platforms: ['darwin'],
