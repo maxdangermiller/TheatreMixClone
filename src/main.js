@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
-import {discover, connect, write_cue} from './main/sound.js';
+import {discover, connect, write_cue, fire_sound_check} from './main/sound.js';
 import {loadShow, getShow} from './main/showManager.js';
 
 import {handle_open_file} from './main/fileManager.js';
@@ -22,6 +22,7 @@ ipcMain.handle('presonus:discover', discover);
 ipcMain.handle('presonus:connect', connect);
 // ipcMain.handle('presonus:set_dca', set_dca);
 ipcMain.handle('presonus:write_cue', write_cue);
+ipcMain.handle('presonus:fire_sound_check', fire_sound_check);
 
 ipcMain.handle('show:load', async (_, path) => { return loadShow(path); });
 

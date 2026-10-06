@@ -59,7 +59,7 @@ const BUTTON_STYLE = {
 
 const DEFAULT_HOVER_STATE = {
     rescan:false, manual: false, advanced: false, 
-    disconnect: false, apply: false, close: false, ok: false
+    disconnect: false, apply: false, close: false, ok: true
 };
 
 
@@ -138,20 +138,21 @@ const Settings = () => {
     const ok = async () => {
         if (selRow == -1) { return; }
 
-        console = devices[selRow];
+        let board = devices[selRow];
+        console.log(board);
 
-		if (!is_ip_valid(console.ip)) {
+		if (!is_ip_valid(board.ip)) {
 			setValid(false);
 		}
 		else {
-			console.log(`Connecting to console at '${console.ip}' on port ${console.port}.`)
+			console.log(`Connecting to console at '${board.ip}' on port ${board.port}.`)
 
 			try {
 				console.log('Connecting...');
 
 				const result = await window.presonus.connect(
-					console.ip,
-					console.port
+					board.ip,
+					board.port
 				);
 
 				console.log('Connection result:', result);
@@ -164,7 +165,7 @@ const Settings = () => {
     }
 
     const start_discovery = async () => {
-        const clients = await window.presonus.discover(30000)
+        const clients = await window.presonus.discover(30000);
 
         setDevices(clients);
     }
@@ -281,7 +282,7 @@ const Settings = () => {
                             onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: true})}
                             onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: false})}
                             onClick={ok}
-                            disabled={selRow != -1}
+                            disabled={selRow == -1}
                         >
                             OK
                         </button>

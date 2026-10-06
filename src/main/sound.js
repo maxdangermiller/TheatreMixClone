@@ -40,7 +40,7 @@ const discover = async () => {
 
 	console.log("[SOUND:discover]: Discovering PreSonous Consoles on the Network!")
 
-	/*
+	
 	return [
 		{
 			name: "StudioLive 32 Hayden",
@@ -50,7 +50,7 @@ const discover = async () => {
 			timestamp: "Right now"
 		}
 	]
-	*/
+	
 
 	return new Promise((resolve) => {
 		discovery.on('discover', (device) => {
@@ -277,7 +277,7 @@ const write_cue = async (_event, {cue_object}) => {
 	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
 
 	if (presonusClient === null) {
-		throw new Error("Client has not yet been connected!");
+		console.warn("Client is not yet connected!")
 		return;
 	}
 	
@@ -380,6 +380,14 @@ const write_cue = async (_event, {cue_object}) => {
 }
 
 /**
+ * Fire Sound Check Cue
+ * @param {Event} _event 
+ */
+const fire_sound_check = async (_event) => {
+	set_soundcheck_labels();
+}
+
+/**
  * Get Profile in Show by channel number
  * @param {Number} ch channel number
  * @returns {Profile} TheatreMix Profile
@@ -431,6 +439,11 @@ const init_channels = async () => {
 }
 
 const set_soundcheck_labels = async () => {
+	if (presonusClient == null) {
+		console.warn("Console is not yet connected!");
+		return;
+	}
+
 	const board_state = presonusClient.dumpState().internal.children;
 	const line_state = board_state.line.children;
 
@@ -444,4 +457,4 @@ const set_soundcheck_labels = async () => {
 	}
 }
 
-export {discover, connect, write_cue};
+export {discover, connect, write_cue, fire_sound_check};

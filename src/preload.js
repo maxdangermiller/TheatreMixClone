@@ -12,8 +12,11 @@ contextBridge.exposeInMainWorld('presonus', {
   	set_dca: (dca) =>
 	  	ipcRenderer.invoke('presonus:set_dca', { dca }),
 
-  	write_cue: cue_object =>
+  	write_cue: (cue_object) =>
 	  	ipcRenderer.invoke('presonus:write_cue', {cue_object}),
+
+  	fire_sound_check: () =>
+	  	ipcRenderer.invoke('presonus:fire_sound_check', {}),
 });
 
 contextBridge.exposeInMainWorld('showApi', {

@@ -6,9 +6,13 @@ import ShowFile from '../../models/ShowFile.js';
  * @param {ShowFile} show
  * @param {Cue} cue 
  * @param {Integer} dca_number 
- * @returns 
+ * @returns {String} label
  */
 const get_DCA_label = (show, cue, dca_number) => {
+
+    if (show == null || cue == null) {
+        return "";
+    } 
 
 
     let prefix = "dca";

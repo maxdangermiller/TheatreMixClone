@@ -25,7 +25,8 @@ const TABLE_STYLE = {
 	textAlign: 'left', 
 	color: TEXT_COLOR,
 	position: 'sticky',
-	fontFamily: 'Arial'
+	fontFamily: 'Arial',
+	overflowX: 'auto'
 }
 
 const HEADER_ITEM_STYLE = {
@@ -33,6 +34,7 @@ const HEADER_ITEM_STYLE = {
 	border: '2px solid ' + BORDER_COLOR,
 	borderBottom: '4px solid ' + BORDER_COLOR,
 	textAlign: 'center',
+	minWidth: 50
 }
 
 const LABEL_HEADER_STYLE = {
@@ -40,10 +42,17 @@ const LABEL_HEADER_STYLE = {
 	width: '10%!important'
 }
 
+const CUE_NUM_HEADER_STYLE = {
+	...HEADER_ITEM_STYLE,
+	width: 60
+}
+
 
 const DCA_HEADER_STYLE = {
 	...HEADER_ITEM_STYLE,
-	minWidth: '50px'
+	// minWidth: '50px',
+	// maxWidth: '75px'
+	width: 100
 }
 
 const ROW_ITEM_STYLE = {
@@ -82,15 +91,22 @@ const Editor = ({showData, setShowData}) => {
 
 	const rowRefs = useRef({});
 
-	const [cue_index, set_index] = useState(0);
-
-	const addCue = () => {
-		
-	}
+	const [cue_index, set_index] = useState(-1);
 
 	
-
+	/**
+	 * Fire Cue
+	 * @param {Int} row_index 
+	 */
 	const fireCue = async (row_index) => {
+
+		console.log("[Editor] Firing cue at index: ", row_index)
+
+		if (row_index == -1) {
+			fireSoundCheck();
+			return;
+		}
+
 		const cue = getCues()[row_index];
 
 		
@@ -109,10 +125,20 @@ const Editor = ({showData, setShowData}) => {
 			dca11Label: get_DCA_label(showData, cue, 11),
 			dca12Label: get_DCA_label(showData, cue, 12),
 		}
-		console.log("[Editor2] Firing cue: ", cue)
-		console.log("[Editor2] Firing (modified) cue: ", modified_cue)
+		console.log("[Editor] Firing cue: ", cue)
+		console.log("[Editor] Firing (modified) cue: ", modified_cue)
 
 		await window.presonus.write_cue(modified_cue);
+	}
+
+
+	/**
+	 * Fire Sound Check Cue
+	 */
+	const fireSoundCheck = async () => {
+		console.log("[Editor] Firing SOUND CHECK CUE!");
+
+		await window.presonus.fire_sound_check();
 	}
 
 
@@ -121,8 +147,8 @@ const Editor = ({showData, setShowData}) => {
 	 * @param {Integer} row_index 
 	 */
 	const goToRow = (row_index) => {
-		const targetRow = rowRefs.current[row_index];
-		if (targetRow) {
+		const targetRow = rowRefs.current[row_index + 1];
+		if (targetRow ) {
 
 			set_index(row_index);
 			fireCue(row_index);
@@ -187,7 +213,7 @@ const Editor = ({showData, setShowData}) => {
 			{/* Table Header */}
 			<thead>
 			<tr style={{ backgroundColor: HEADER_COLOR }}>
-				<th style={HEADER_ITEM_STYLE}>#</th>
+				<th style={CUE_NUM_HEADER_STYLE}>#</th>
 				<th style={LABEL_HEADER_STYLE}>Label</th>
 				<th style={DCA_HEADER_STYLE}>DCA 1</th>
 				<th style={DCA_HEADER_STYLE}>DCA 2</th>
@@ -202,27 +228,45 @@ const Editor = ({showData, setShowData}) => {
 			
 			{/* Table Body */}
 			<tbody>
-			{/* 3. Loop through your data array using .map() */}
-			{getCues().map((cue, index) => (
 				<tr 
-					key={index} 
+					key={-1} 
 					style={{
-						backgroundColor: index === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(cue.colour),
+						backgroundColor: -1 === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(-1),
 					}}
-					ref={(el) => (rowRefs.current[index] = el)}
+					ref={(el) => (rowRefs.current[0] = el)}
 				>
-					<td style={CUE_ITEM_STYLE}>{cue.number}.{cue.point}</td>
-					<td style={ROW_ITEM_STYLE}>{cue.name}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 1)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 2)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 3)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 4)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 5)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 6)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 7)}</td>
-					<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 8)}</td>
+					<td style={CUE_ITEM_STYLE}>0.0</td>
+					<td style={ROW_ITEM_STYLE}>Line Checks</td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
+					<td style={DCA_ITEM_STYLE}></td>
 				</tr>
-			))}
+				{/* 3. Loop through your data array using .map() */}
+				{getCues().map((cue, index) => (
+					<tr 
+						key={index} 
+						style={{
+							backgroundColor: index === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(cue.colour),
+						}}
+						ref={(el) => (rowRefs.current[index + 1] = el)}
+					>
+						<td style={CUE_ITEM_STYLE}>{cue.number}.{cue.point}</td>
+						<td style={ROW_ITEM_STYLE}>{cue.name}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 1)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 2)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 3)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 4)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 5)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 6)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 7)}</td>
+						<td style={DCA_ITEM_STYLE}>{get_DCA_label(showData, cue, 8)}</td>
+					</tr>
+				))}
 			</tbody>
 
 		</table>

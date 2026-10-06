@@ -1,0 +1,25 @@
+First Install Homebrew (You have already done this)
+
+You **CAN** copy and paste these commands
+
+
+Starting in a new terminal, run the following commands to setup on device compilation:
+
+brew install git
+brew install node@22
+cd Desktop/
+mkdir PresonusTheatreMix
+cd PresonusTheatreMix/
+git clone https://github.com/maxdangermiller/TheatreMixClone.git
+npm install
+npm start
+
+
+Starting in a new terminal, run the following commands to update the code:
+
+cd Desktop/PresonusTheatreMix/
+rm -rf node_modules package-lock.json
+npm cache clean --force
+git pull origin
+npm install 
+npm start
