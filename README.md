@@ -8,13 +8,11 @@ This software was developed due to the lack of support for PreSonus StudioLive c
 The app uses Electron.js alongside React.js. The presonus interface is based off of @featherbear's [presonus-studiolive-api](https://github.com/featherbear/presonus-studiolive-api)
 
 ## Usage
-
-### INSTALL
 First Install Homebrew (You have already done this)
 
 You **CAN** copy and paste these commands
 
-
+### INSTALL
 Starting in a new terminal, run the following commands to setup on device compilation:
 
 ```bash

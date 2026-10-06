@@ -1,0 +1,707 @@
+diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
+index 81eeffb..73cf59b 100644
+--- a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
++++ b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
+@@ -134,32 +134,6 @@ function simplifyPathTokens(path) {
+ }
+ //#endregion
+ //#region src/lib/util/zlib/ubjson.ts
+-const decodeMap = {
+-	105: {
+-		length: 1,
+-		read: (buf) => buf.readInt8()
+-	},
+-	85: {
+-		length: 1,
+-		read: (buf) => buf.readUint8()
+-	},
+-	73: {
+-		length: 2,
+-		read: (buf) => buf.readInt16BE()
+-	},
+-	108: {
+-		length: 4,
+-		read: (buf) => buf.readInt32BE()
+-	},
+-	76: {
+-		length: 8,
+-		read: (buf) => buf.readBigInt64BE()
+-	},
+-	100: {
+-		length: 4,
+-		read: (buf) => buf.readFloatBE()
+-	}
+-};
+ /**
+ * Deserialise a zlib buffer into a raw object payload
+ * Partially implements the UBJSON specification
+@@ -186,12 +160,12 @@ function deserialiseUBJSON(buf) {
+ 			}
+ 			if (controlCharacter !== 105) throw new Error(`(ZB) Failed to find delimiter 1, found ${controlCharacter} instead at position ${idx}`);
+ 			const length = buf[idx++];
+-			keyData = buf.subarray(idx, idx + length);
++			keyData = buf.slice(idx, idx + length);
+ 			idx += length;
+ 		}
+-		const typeByte = buf[idx++];
+-		let valueProcessor;
+-		switch (typeByte) {
++		const type = buf[idx++];
++		let length = 0;
++		switch (type) {
+ 			case 123: {
+ 				const leaf = {};
+ 				if (Array.isArray(workingSet[0])) workingSet[0].push(leaf);
+@@ -207,20 +181,50 @@ function deserialiseUBJSON(buf) {
+ 				continue;
+ 			}
+ 			case 83:
+-				if (buf[idx++] !== 105) throw new Error("(ZB) Unexpected length type when reading string");
+-				valueProcessor = {
+-					length: buf[idx++],
+-					read: (buf) => buf.toString()
+-				};
++				if (buf[idx++] !== 105) throw new Error("(ZB) Failed to find delimiter 2");
++				length = buf[idx++];
++				break;
++			case 100:
++				length = 4;
++				break;
++			case 105:
++				length = 1;
++				break;
++			case 85:
++				length = 1;
++				break;
++			case 108:
++				length = 4;
+ 				break;
+-			default:
+-				valueProcessor = decodeMap[typeByte];
++			case 76:
++				length = 8;
+ 				break;
++			default: throw new Error(`Unknown type ${type} at position ${idx}`);
+ 		}
+-		if (!valueProcessor) throw new Error(`Unknown type ${typeByte} at position ${idx}`);
+-		const valueBuffer = buf.subarray(idx, idx + valueProcessor.length);
+-		const value = valueProcessor.read(valueBuffer);
+-		idx += valueProcessor.length;
++		const valueData = buf.slice(idx, idx + length);
++		let value;
++		switch (type) {
++			case 83:
++				value = valueData.toString();
++				break;
++			case 100:
++				value = valueData.readFloatBE();
++				break;
++			case 105:
++				value = valueData.readInt8();
++				break;
++			case 85:
++				value = valueData.readUInt8();
++				break;
++			case 108:
++				value = valueData.readInt32BE();
++				break;
++			case 76:
++				value = valueData.readBigInt64BE();
++				break;
++			default: value = valueData.toString();
++		}
++		idx += length;
+ 		if (Array.isArray(workingSet[0])) workingSet[0].push(value);
+ 		else workingSet[0][keyData.toString()] = value;
+ 	}
+@@ -326,9 +330,6 @@ const DEFAULTS = {
+ 		fromUB: DEFAULT_TRANSFORMS.integer.boolean
+ 	},
+ 	float: { fromPV: DEFAULT_TRANSFORMS.buffer.float },
+-	/**
+-	* Define a key with passthrough methods to skip wildcard matching
+-	*/
+ 	passthrough: {
+ 		fromPV: (x) => x,
+ 		fromUB: (x) => x,
+@@ -346,7 +347,7 @@ const transformers = {
+ 	"line.*.digitalgain": DEFAULTS.float,
+ 	"line.*.dca.volume": { fromPV: IGNORE },
+ 	"*.ch*.volume": {
+-		fromPV: (buffer) => DEFAULTS.float.fromPV(buffer) * 100,
++		fromPV: DEFAULT_TRANSFORMS.buffer.float,
+ 		fromUB(value) {
+ 			return value * 100;
+ 		}
+@@ -557,13 +558,7 @@ function handleMSPacket(data) {
+ 		5: "FX",
+ 		6: "SUB",
+ 		7: "MAIN",
+-		/**
+-		* StudioLive 64S
+-		*/
+ 		8: "MONO",
+-		/**
+-		* StudioLive 64S
+-		*/
+ 		11: "MASTER"
+ 	};
+ 	const groupCount = data.readUInt8(0);
+@@ -774,25 +769,10 @@ function parseChunk(data) {
+ 	const payloadSize = header.readUInt16LE();
+ 	data = data.slice(14);
+ 	return {
+-		/**
+-		* Chunk ID
+-		*/
+ 		id,
+-		/**
+-		* Data buffer
+-		*/
+ 		data,
+-		/**
+-		* Current position / Number of previous bytes in the chunk set
+-		*/
+ 		bytesRead,
+-		/**
+-		* Total size of the chunk set
+-		*/
+ 		totalSize,
+-		/**
+-		* Size of the current chunk
+-		**/
+ 		payloadSize
+ 	};
+ }
+@@ -870,15 +850,19 @@ function analysePacket(packet, ignoreLengthMismatch = false) {
+ function createPacket(messageCode, data, customA, customB) {
+ 	if (!data) data = Buffer.allocUnsafe(0);
+ 	const connIdentity = Buffer.from([
+-		customA ?? 104,
++		customA ?? CByte.A,
+ 		0,
+-		customB ?? 101,
++		customB ?? CByte.B,
+ 		0
+ 	]);
+ 	if (connIdentity.length !== 4) throw Error("connIdentity");
++
+ 	const lengthLE = toShort(messageCode.length + connIdentity.length + data.length);
++
+ 	if (lengthLE.length !== 2) throw Error("lengthLE");
++
+ 	const b = Buffer.alloc(PacketHeader.length + lengthLE.length + messageCode.length + connIdentity.length + data.length);
++	
+ 	let cursor = 0;
+ 	b.fill(PacketHeader);
+ 	b.fill(lengthLE, cursor += PacketHeader.length);
+@@ -958,7 +942,7 @@ var Discovery = class extends EventEmitter {
+ //#region src/lib/MeterServer.ts
+ function parseDataFrame(data) {
+ 	if (!data.subarray(0, 4).equals(PacketHeader)) return;
+-	if (data.subarray(6, 8).toString() !== "MS") return;
++	if (data.subarray(6, 8).toString() !== MessageCode.Meter16) return;
+ 	const type = data.subarray(12, 16).toString();
+ 	switch (type) {
+ 		case "levl": {
+@@ -1070,24 +1054,63 @@ let counts;
+ function setCounts(channelCount) {
+ 	counts = channelCount;
+ }
++
++
++/**
++ * Parse Channel String
++ * @author Max Miller
++ * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++ * @param {boolean} whitelist 
++ * @returns {String} channel selection string for SL API
++ */
+ function parseChannelString(selector, whitelist) {
+ 	let { type, channel } = selector;
+ 	const { mixType, mixNumber } = selector;
++	
++	// Check if there's a valid mix type flag to select in the specific channel
+ 	if (counts && mixType) {
+-		if (!mixNumber || mixNumber < 1) throw new Error("Invalid mix channel provided");
+-		switch (mixType) {
+-			case "AUX":
+-			case "FX":
+-				if (!(mixNumber <= counts[mixType])) throw new Error("Invalid mix channel provided");
+-				break;
+-			default: throw new Error("Invalid mix type provided");
++		if (!mixNumber || mixNumber < 1) {
++			throw new Error("Invalid mix channel provided");
++			return "";
++		}
++		
++		if (mixType == "AUX" || mixType == "FX") {
++			if (mixNumber > counts[mixType]) {
++				throw new Error("Invalid mix channel provided");
++				return "";
++			}
++			// Valid AUX or FX mix selection
++		}
++		// Allow Selecting a line channel if the channel type is a DCA
++		else if (type == "DCA" && mixType == "LINE") {
++			// Allow
+ 		}
++		else {
++			throw new Error("Unexpected mix type");
++		}
++	}
++
++	// Check if type is valid
++	if (!Object.keys(Channel).includes(type)) {
++		console.log(type);
++		throw new Error("Invalid channel type provided")
+ 	}
+-	if (!Object.keys(Channel).includes(type)) throw new Error("Invalid channel type provided");
+-	if (["MAIN", "TALKBACK"].includes(type)) channel = 1;
++
++	// If selecting MAIN or TALKBACK, force channel to be 1
++	if (["MAIN", "TALKBACK"].includes(type)) {
++		channel = 1;
++	}
++
++
+ 	const oldChannel = channel;
+ 	channel = Math.trunc(channel);
+-	if (!(channel > 0) || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) throw new Error("Invalid channel provided");
++
++	// Make sure channel actually exsists inside of the type
++	if (channel <= 0 || channel !== oldChannel || counts && !(counts[type] && counts[type] >= channel)) {
++		throw new Error("Invalid channel provided");
++	}
++
++	// return the selector for the channel
+ 	return `${Channel[type]}/ch${channel}`;
+ }
+ //#endregion
+@@ -1245,7 +1268,7 @@ var KeepAliveHelper = class {
+ 			this.#ids.push(id);
+ 			const idBuffer = Buffer.allocUnsafe(2);
+ 			idBuffer.writeUInt16BE(id);
+-			checkFn([createPacket("KA"), createPacket("FR", Buffer.concat([
++			checkFn([createPacket(MessageCode.KeepAlive), createPacket(MessageCode.FileRequest, Buffer.concat([
+ 				idBuffer,
+ 				Buffer.from([
+ 					70,
+@@ -1293,24 +1316,24 @@ var Client = class {
+ 		this.meteringClient = null;
+ 		this.conn = DataClient_default(this.handleRecvPacket.bind(this));
+ 		this.state = CacheProvider({ get: (key) => this.zlibData ? getZlibValue(this.zlibData, key) : null });
+-		this.on("ZB", (ZB) => {
++		this.on(MessageCode.ZLIB, (ZB) => {
+ 			this.zlibData = ZB;
+ 		});
+-		this.on("PV", ({ name, value }) => {
++		this.on(MessageCode.ParamValue, ({ name, value }) => {
+ 			name = tokenisePath(name);
+ 			for (const ignoreKey of ignorePV) if (doesLookupMatch(ignoreKey, name)) return;
+ 			this.state.set(name, value);
+ 		});
+-		this.on("PS", ({ name, value }) => {
++		this.on(MessageCode.ParamString, ({ name, value }) => {
+ 			this.state.set(name, value);
+ 		});
+-		this.on("PC", ({ name, value }) => {
++		this.on(MessageCode.ParamChars, ({ name, value }) => {
+ 			this.state.set(name, value);
+ 		});
+-		this.on("MS", (MS) => {
++		this.on(MessageCode.FaderPosition, (MS) => {
+ 			for (const [type, values] of Object.entries(MS)) for (let i = 0; i < values.length; i++) this.state.set(`${Channel[type]}/ch${i + 1}/volume`, values[i]);
+ 		});
+-		this.on("FD", ({ id, data }) => {
++		this.on(MessageCode.FileData, ({ id, data }) => {
+ 			this.fileDataEmitter.emit(id, data);
+ 		});
+ 	}
+@@ -1367,7 +1390,7 @@ var Client = class {
+ 	async meterSubscribe(port) {
+ 		port = port ?? 0;
+ 		this.meteringClient = await createServer.call(this, port, (meterData) => this.emit("meter", meterData));
+-		this._sendPacket("UM", toShort(this.meteringClient.address().port), 0);
++		this._sendPacket(MessageCode.Hello, toShort(this.meteringClient.address().port), 0);
+ 	}
+ 	/**
+ 	* Unsubscribe from the metering data
+@@ -1393,13 +1416,13 @@ var Client = class {
+ 				clearTimeout(fastReconnectTimer);
+ 				this.keepAliveHelper = new KeepAliveHelper(3e3);
+ 				const chunkedZlibInitCallback = (data) => {
+-					this.removeListener("CK", chunkedZlibInitCallback);
+-					this.emit("ZB", data);
++					this.removeListener(MessageCode.Chunk, chunkedZlibInitCallback);
++					this.emit(MessageCode.ZLIB, data);
+ 				};
+-				this.addListener("CK", chunkedZlibInitCallback);
++				this.addListener(MessageCode.Chunk, chunkedZlibInitCallback);
+ 				Promise.all([new Promise((resolve) => {
+-					this.once("ZB", () => {
+-						this.removeListener("CK", chunkedZlibInitCallback);
++					this.once(MessageCode.ZLIB, () => {
++						this.removeListener(MessageCode.Chunk, chunkedZlibInitCallback);
+ 						const getCount = (key) => Object.keys(this.state.get(key) ?? {}).length;
+ 						const channelCounts = {
+ 							LINE: getCount("line"),
+@@ -1410,17 +1433,8 @@ var Client = class {
+ 							TALKBACK: getCount("talkback"),
+ 							MAIN: getCount("main"),
+ 							DCA: getCount("filtergroup"),
+-							/**
+-							* 16R doesn't have SUB groups
+-							*/
+ 							SUB: getCount("sub"),
+-							/**
+-							* Exclusive to the 64S
+-							*/
+ 							MASTER: getCount("master"),
+-							/**
+-							* Exclusive to the 64S
+-							*/
+ 							MONO: getCount("mono")
+ 						};
+ 						this.channelCounts = channelCounts;
+@@ -1430,11 +1444,11 @@ var Client = class {
+ 				}), new Promise((resolve) => {
+ 					const subscribeCallback = (data) => {
+ 						if (data.id === "SubscriptionReply") {
+-							this.removeListener("JM", subscribeCallback);
++							this.removeListener(MessageCode.JSON, subscribeCallback);
+ 							resolve(this);
+ 						}
+ 					};
+-					this.addListener("JM", subscribeCallback);
++					this.addListener(MessageCode.JSON, subscribeCallback);
+ 				})]).then(() => {
+ 					this.keepAliveHelper.start((packets) => {
+ 						packets.forEach((bytes) => this._writeBytes(bytes));
+@@ -1452,7 +1466,7 @@ var Client = class {
+ 					this.emit("connected");
+ 					resolve(this);
+ 				});
+-				this._sendPacket("JM", craftSubscribe(subscribeData));
++				this._sendPacket(MessageCode.JSON, craftSubscribe(subscribeData));
+ 			});
+ 			const doConnect = () => {
+ 				this.conn.destroy();
+@@ -1467,7 +1481,7 @@ var Client = class {
+ 	}
+ 	async close() {
+ 		this.meterUnsubscribe();
+-		await this._sendPacket("JM", unsubscribePacket).then(() => {
++		await this._sendPacket(MessageCode.JSON, unsubscribePacket).then(() => {
+ 			this.conn.destroy();
+ 		});
+ 	}
+@@ -1478,17 +1492,17 @@ var Client = class {
+ 		let [messageCode, data] = analysePacket(packet);
+ 		if (messageCode === null) return;
+ 		const handlers = {
+-			["JM"]: handleJMPacket,
+-			["PV"]: handlePVPacket,
+-			["PS"]: handlePSPacket,
+-			["ZB"]: handleZBPacket,
+-			["MS"]: handleMSPacket,
+-			["CK"]: handleCKPacket,
+-			["PC"]: handlePCPacket,
+-			["FD"]: this.keepAliveHelper.intercept(handleFDPacket),
+-			["PL"]: null,
+-			["BO"]: null,
+-			["MB"]: null
++			[MessageCode.JSON]: handleJMPacket,
++			[MessageCode.ParamValue]: handlePVPacket,
++			[MessageCode.ParamString]: handlePSPacket,
++			[MessageCode.ZLIB]: handleZBPacket,
++			[MessageCode.FaderPosition]: handleMSPacket,
++			[MessageCode.Chunk]: handleCKPacket,
++			[MessageCode.ParamChars]: handlePCPacket,
++			[MessageCode.FileData]: this.keepAliveHelper.intercept(handleFDPacket),
++			[MessageCode.DeviceList]: null,
++			[MessageCode.Unknown1]: null,
++			[MessageCode.Unknown3]: null
+ 		};
+ 		if (Object.hasOwn(handlers, messageCode)) data = handlers[messageCode]?.call?.(this, data);
+ 		else console.warn("Unhandled message code", messageCode);
+@@ -1550,7 +1564,7 @@ var Client = class {
+ 			};
+ 			const eventName = id.toString();
+ 			this.fileDataEmitter.once(eventName, callback);
+-			this._sendPacket("FR", Buffer.concat([
++			this._sendPacket(MessageCode.FileRequest, Buffer.concat([
+ 				idBuffer,
+ 				Buffer.from("List" + key.toString()),
+ 				Buffer.from([0, 0])
+@@ -1569,6 +1583,7 @@ var Client = class {
+ 		return this._writeBytes(createPacket(...params));
+ 	}
+ 	async _writeBytes(bytes) {
++		console.log(bytes)
+ 		return new Promise((resolve) => {
+ 			this.conn.write(bytes, null, (resp) => {
+ 				resolve(resp);
+@@ -1579,7 +1594,7 @@ var Client = class {
+ 	* @param projFile e.g 01.Showfile.proj
+ 	*/
+ 	recallProject(projFile) {
+-		this._sendPacket("JM", JSONtoPacketBuffer({
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
+ 			id: "RestorePreset",
+ 			url: "presets",
+ 			presetTarget: "",
+@@ -1593,7 +1608,7 @@ var Client = class {
+ 	* @param sceneFile e.g. 02.SceneBackup.scn
+ 	*/
+ 	recallProjectScene(projFile, sceneFile) {
+-		this._sendPacket("JM", JSONtoPacketBuffer({
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
+ 			id: "RestorePreset",
+ 			url: "presets",
+ 			presetTarget: "",
+@@ -1602,7 +1617,7 @@ var Client = class {
+ 		}));
+ 	}
+ 	recallChannelStrip(selector, chanFile) {
+-		this._sendPacket("JM", JSONtoPacketBuffer({
++		this._sendPacket(MessageCode.JSON, JSONtoPacketBuffer({
+ 			id: "RestorePreset",
+ 			url: "presets",
+ 			presetTarget: parseChannelString(selector, [
+@@ -1649,13 +1664,13 @@ var Client = class {
+ 		const shouldInvert = !!selector.mixType;
+ 		let state = status === "toggle" ? !this.state.get(targetString) : status;
+ 		if (status !== "toggle" && shouldInvert) state = !state;
+-		this._sendPacket("PV", Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
+ 	}
+ 	/**
+ 	* @private
+ 	*/
+ 	_getMuteTargetString(selector) {
+-		let targetString = parseChannelString(selector);
++		let targetString = parseChannelString(selector);  // "{Channel[type]}/ch{channel}"
+ 		if (selector.mixType) targetString += `/assign_${selector.mixType.toLowerCase()}${selector.mixNumber}`;
+ 		else targetString += "/mute";
+ 		return targetString;
+@@ -1682,7 +1697,7 @@ var Client = class {
+ 		const shouldInvert = !!selector.mixType;
+ 		let state = status === "toggle" ? !this.state.get(targetString) : status;
+ 		if (status !== "toggle" && shouldInvert) state = !state;
+-		this._sendPacket("PV", Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetString + "\0\0\0"), toBoolean(state)]));
+ 	}
+ 	/**
+ 	* @private
+@@ -1693,7 +1708,7 @@ var Client = class {
+ 		return targetString;
+ 	}
+ 	setColor(selector, hex, alpha = 255) {
+-		this._sendPacket("PC", Buffer.concat([
++		this._sendPacket(MessageCode.ParamChars, Buffer.concat([
+ 			Buffer.from(`${parseChannelString(selector)}/color\x00\x00\x00`),
+ 			Buffer.from(hex, "hex"),
+ 			Buffer.from([alpha])
+@@ -1708,6 +1723,95 @@ var Client = class {
+ 	getColour(...args) {
+ 		return this.getColor.apply(this, args);
+ 	}
++
++	/**
++	 * Set Channel Name
++	 * @author Max Miller
++	 * @param {ChannelSelector} selector 
++	 * @param {String} name 
++	 */
++	setName(selector, name) {
++		if (selector.type === "LINE") {
++			this._sendPacket(
++				MessageCode.ParamString,
++				Buffer.from(
++					`${parseChannelString(selector)}/username\0\0\0${name}\0`
++				)
++			);
++		} else {
++			this._sendPacket(
++				MessageCode.ParamString,
++				Buffer.from(
++					`${parseChannelString(selector)}/name\0\0\0${name}\0`
++				)
++			);
++		}
++	}
++
++	/**
++	 * Assign DCA
++	 * @author Max Miller
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @param {Int[]} assign_chans 
++	 * @param {Int[]}
++	 */
++	assign_dca(selector, assign_chans, controlled_chans = null) {
++		if (selector.type !== "DCA") {
++			throw new Error("Invalid Channel Type!")
++			return;
++		}
++
++		const targetChanString = parseChannelString(selector);
++
++		if (controlled_chans == null) {
++			controlled_chans = Array.from({ length: this.channelCounts["LINE"] }, (_, index) => index + 1);
++		} 
++		
++		console.log(`Assigning DCA #${selector.channel} to channels ${assign_chans}`);
++
++		// Loop through every line in the DCA
++		for (let n of controlled_chans) {
++			const path = `${targetChanString}/line${n}`;
++			const cur_state = this.state.get(path);
++
++			console.log(`path: ${path}, in assign chans ${assign_chans}: ${assign_chans.includes(n)}`);
++			
++			// If it's in assigned channels, we should assign it
++			if (assign_chans.includes(n)) {
++				console.log(`Adding chan #${n}`);
++				// const bytes = Buffer.concat([Buffer.from(targetChanString), Buffer.from('2f6c696e653100000000000000', 'hex')]);
++
++				if (cur_state !== 1 || true) {
++					// this._sendPacket(MessageCode.ParamValue, bytes, {customA: 'j', customB: 'e'});
++					this._sendPacket(
++						MessageCode.ParamValue,
++						Buffer.concat([
++							Buffer.from(`${path}\0\0\0`),
++							toFloat(1.0)
++						])
++					);
++				}
++			}
++			// Otherwise unassign it
++			else if (cur_state !== 0) {
++				console.log(`Removing chan #${n}`);
++				// this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetChanString + "\0\0\0")]));
++				this._sendPacket(
++					MessageCode.ParamValue,
++					Buffer.concat([
++						Buffer.from(`${path}\0\0\0`),
++						toFloat(0.0)
++					])
++				);
++			}
++			
++			// Otherwise it must already be correct
++			else {
++				// console.log("[presonus api]: DCA correctly assigned already!");
++			}
++		}
++	}
++
+ 	/**
+ 	* For a mono channel, the pan value is the pan value from 0 (hard left) to 100 (hard right)
+ 	* For a stereo channel, the pan value is the width from 0 to 100 (stereo)
+@@ -1726,35 +1830,60 @@ var Client = class {
+ 			default: throw new Error("Unexpected mix type");
+ 		}
+ 		else channelString += "/" + (isStereo ? "stereopan" : "pan");
+-		this._sendPacket("PV", Buffer.concat([Buffer.from(`${channelString}\x00\x00\x00`), toFloat(pan / 100)]));
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${channelString}\x00\x00\x00`), toFloat(pan / 100)]));
+ 	}
+ 	/**
+ 	* @internal By original nature, only an odd numbered channel is targeted (& ~1)
+ 	*/
+ 	setLink(selector, link) {
+-		this._sendPacket("PV", Buffer.concat([Buffer.from(`${parseChannelString(selector)}/link\x00\x00\x00`), toBoolean(link)]));
++		this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${parseChannelString(selector)}/link\x00\x00\x00`), toBoolean(link)]));
+ 	}
++
++	/**
++	 * Get Level Specfic Selector String
++	 * @author Max Miller
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @returns 
++	 */
+ 	_getLevelString(selector) {
+ 		let targetString = parseChannelString(selector);
+-		if (selector.mixType) switch (selector.mixType) {
+-			case "AUX":
++		
++		if (selector.mixType) {
++			if (selector.mixType == "AUX") {
+ 				targetString += `/${Channel[selector.mixType]}${selector.mixNumber}`;
+-				break;
+-			case "FX":
++			}
++
++			else if (selector.mixType == "FX") {
+ 				targetString += `/FX${String.fromCharCode(64 + selector.mixNumber)}`;
+-				break;
+-			default: throw new Error("Unexpected mix type");
++			}
++
++			// No volume adjustment needed, so mixtype LINE is not allowed here
++
++			else {
++				throw new Error("Unexpected mix type");
++			}
++		}
++		else {
++			targetString += "/volume";
+ 		}
+-		else targetString += "/volume";
++
+ 		return targetString;
+ 	}
++
+ 	getLevel(selector) {
+ 		return this.state.get(this._getLevelString(selector));
+ 	}
++	
+ 	/**
+-	* @internal Send a level command to the target
+-	* targetLevel - [0, 100]
+-	*/
++	 * Set Level
++	 * targetLevel - [0, 100]
++	 * @author Max Miller
++	 * @internal Send a level command to the target
++	 * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
++	 * @param {Float} targetLevel 
++	 * @param {number} duration 
++	 * @returns {Promise}
++	 */
+ 	_setLevel(selector, targetLevel, duration = 0) {
+ 		const targetString = this._getLevelString(selector);
+ 		const assertReturn = () => {
+@@ -1766,7 +1895,7 @@ var Client = class {
+ 			});
+ 		};
+ 		const set = (level) => {
+-			this._sendPacket("PV", Buffer.concat([Buffer.from(`${targetString}\x00\x00\x00`), toFloat(level / 100)]));
++			this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(`${targetString}\x00\x00\x00`), toFloat(level / 100)]));
+ 		};
+ 		if (!duration) {
+ 			set(targetLevel);
+@@ -1780,6 +1909,7 @@ var Client = class {
+ 			});
+ 		});
+ 	}
++
+ 	/**
+ 	* Set volume (decibels)
+ 	*
+@@ -1789,6 +1919,7 @@ var Client = class {
+ 	async setChannelVolumeLogarithmic(selector, decibel, duration) {
+ 		return this._setLevel(selector, logVolumeToLinear(decibel), duration);
+ 	}
++
+ 	/**
+ 	* Set volume (pseudo intensity)
+ 	*
+@@ -1801,6 +1932,7 @@ var Client = class {
+ 	async setChannelVolumeLinear(selector, linearLevel, duration) {
+ 		return this._setLevel(selector, linearLevel, duration);
+ 	}
++
+ 	/**
+ 	* Look at metering data and adjust channel fader so that the level is of a certain loudness
+ 	* NOTE: This is not perceived loudness. Not very practical, but useful in a pinch?
