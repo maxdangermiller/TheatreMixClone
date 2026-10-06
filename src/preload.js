@@ -3,8 +3,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('presonus', {
-  	discover: () => 
-		ipcRenderer.invoke('presonus:discover'),
+  	discover: (timeout) => 
+		ipcRenderer.invoke('presonus:discover', {timeout}),
 
   	connect: (host, port) =>
 	  	ipcRenderer.invoke('presonus:connect', { host, port }),
@@ -33,8 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   	onOpenFile: (callback) => ipcRenderer.on('file-opened', (event, filePath) => callback(filePath)),
 	removeOpenFileListener: () => ipcRenderer.removeAllListeners('file-opened'),
 	
-	openErrorDialog: 
-		msg => ipcRenderer.invoke('presonus:openErrorDialog', msg),
+	openErrorDialog: msg => ipcRenderer.invoke('presonus:openErrorDialog', msg),
+
+	onMainLog: (callback) => ipcRenderer.on('main-log', (_event, value) => callback(value)),
+	removeMainLogListener: () => ipcRenderer.removeAllListeners('main-log'),
 
 
 });

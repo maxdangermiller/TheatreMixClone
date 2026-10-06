@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
 
-import { is_ip_valid, ip_regex } from '../utils/ip_tools.js';
 import { cue_sorter } from '../utils/sorters.js';
 import { get_DCA_label } from './utils/cue_utils.js';
 
@@ -13,7 +12,6 @@ import {
 
 const CONTAINER_STYLE = {
 	height: "80vh",
-	width: "100%",
 	overflowX: 'auto',
 	overflowY: 'auto',
 	padding: "10px"
@@ -99,9 +97,6 @@ const Editor = ({showData, setShowData}) => {
 	 * @param {Int} row_index 
 	 */
 	const fireCue = async (row_index) => {
-
-		console.log("[Editor] Firing cue at index: ", row_index)
-
 		if (row_index == -1) {
 			fireSoundCheck();
 			return;
@@ -125,8 +120,7 @@ const Editor = ({showData, setShowData}) => {
 			dca11Label: get_DCA_label(showData, cue, 11),
 			dca12Label: get_DCA_label(showData, cue, 12),
 		}
-		console.log("[Editor] Firing cue: ", cue)
-		console.log("[Editor] Firing (modified) cue: ", modified_cue)
+		console.log("[Editor] Firing cue: ", modified_cue)
 
 		await window.presonus.write_cue(modified_cue);
 	}

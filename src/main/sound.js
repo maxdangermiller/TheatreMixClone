@@ -31,16 +31,17 @@ let current_cue = null;
 
 /**
  * Handle Presonus Discovery
+ * @param {Number} timeout in ms
  * @returns {Promise} discovery Info
  * @async
  */
-const discover = async () => {
+const discover = async (timeout) => {
 	const discovery = new Discovery();
 	const devices = [];
 
 	console.log("[SOUND:discover]: Discovering PreSonous Consoles on the Network!")
 
-	
+	/*
 	return [
 		{
 			name: "StudioLive 32 Hayden",
@@ -50,18 +51,18 @@ const discover = async () => {
 			timestamp: "Right now"
 		}
 	]
-	
+	*/
 
 	return new Promise((resolve) => {
 		discovery.on('discover', (device) => {
 			devices.push(device);
 		});
 
-		discovery.start(3000);
+		discovery.start(timeout);
 
 		setTimeout(() => {
 			resolve(devices);
-		}, 3500);
+		}, timeout + 500);
 	});
 }
 

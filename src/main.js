@@ -45,7 +45,7 @@ const createWindow = () => {
 		icon: path.join(__dirname, '../build/icons/icon1028.png'),
 
 		webPreferences: {
-			preload: path.join(__dirname, 'preload.js'),
+			preload: path.join(__dirname, 'preload.cjs'),
 		},
 	});
 
@@ -58,6 +58,32 @@ const createWindow = () => {
 			path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
 		);
 	}
+
+	// Override console.log in Main process to forward logs
+	const originalLog = console.log;
+	console.log = (...args) => {
+		originalLog(...args); // keep terminal output
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.send('main-log', args.join(' '));
+		}
+	};
+	// Override console.warn in Main process to forward logs
+	const originalWarn = console.warn;
+	console.warn = (...args) => {
+		originalWarn(...args); // keep terminal output
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.send('main-log', args.join(' '));
+		}
+	};
+			/*
+	const originalStdoutWrite = process.stdout.write;
+	process.stdout.write = function (chunk, encoding, callback) {
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.send('main-log', args.join(' '));
+		}
+    	return originalStdoutWrite.apply(process.stdout, arguments);
+	};
+	*/
 
 	// Intercept window.open calls from the React frontend
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -78,7 +104,7 @@ const createWindow = () => {
 					parent: mainWindow,
 					webPreferences: {
 						// Inherit or inject custom preloads if necessary
-						preload: path.join(__dirname, 'preload.js'), 
+						preload: path.join(__dirname, 'preload.cjs'), 
 						contextIsolation: true
 					}
 				}
@@ -88,6 +114,20 @@ const createWindow = () => {
 		// Deny external/unknown popups, or route them to the default browser
 		return { action: 'deny' };
 	});
+
+	// On Load, open the most recent file if it exists
+	mainWindow.webContents.on('did-finish-load', () => {
+		const recent_docs = app.getRecentDocuments();
+
+		// If there isn't a recent document, then don't worry about it
+		if (recent_docs.length < 1) { return; }
+
+		mainWindow.webContents.send('file-opened', recent_docs[0]);
+	});
+
+	mainWindow.on('close', (event) => {
+		app.quit()
+	})
 
 	setMainWindow(mainWindow);
 };
@@ -103,9 +143,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') {
-		app.quit();
-	}
+	app.quit();
 });
 
 
@@ -120,13 +158,9 @@ app.on('open-file', (event, filePath) => {
 	
 	if (app.isReady()) {
 		// loadTargetFile(filePath);
-		console.log("MacOS tried to load " + filePath + ", sending it to the frontend!")
+		console.log("MacOS tried to load " + filePath + ", sending it to the frontend!");
+		app.addRecentDocument(filePath);
 		getMainWindow().webContents.send('file-opened', filePath);
 		
-	} else {
-		// If the app isn't fully launched yet, store it or wait
-		app.once('ready', () => {
-			getMainWindow().webContents.send('file-opened', filePath);
-		});
 	}
 });

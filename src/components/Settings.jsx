@@ -165,6 +165,15 @@ const Settings = () => {
     }
 
     const start_discovery = async () => {
+        // Set a default row while we're waiting on the actual discovery
+        setDevices([{
+			name: "StudioLive 32 Hayden",
+			serial: "SD3E19010055",
+			ip: "169.254.4.171",
+			port: 53000,
+			timestamp: new Date()
+		}]);
+
         const clients = await window.presonus.discover(30000);
 
         setDevices(clients);

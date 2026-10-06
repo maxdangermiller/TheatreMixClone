@@ -25,9 +25,14 @@ const App = () => {
             load_show(filePath)
         });
 
+        // Listen for the 'main-log' channel exposed by preload.js
+        window.electronAPI.onMainLog((logMessage) => {
+            console.log("[MAIN] --> ", logMessage)
+        });
         // Cleanup listener on unmount
         return () => {
             window.electronAPI.removeOpenFileListener();
+            window.electronAPI.removeMainLogListener();
         };
     }, []);
 
