@@ -59,7 +59,7 @@ const BUTTON_STYLE = {
 
 const DEFAULT_HOVER_STATE = {
     rescan:false, manual: false, advanced: false, 
-    disconnect: false, apply: false, close: false, ok: true
+    disconnect: false, apply: false, close: false, ok: false
 };
 
 
@@ -171,12 +171,17 @@ const Settings = () => {
 			serial: "SD3E19010055",
 			ip: "169.254.4.171",
 			port: 53000,
-			timestamp: new Date()
+			timestamp: Date.now()
 		}]);
 
         const clients = await window.presonus.discover(30000);
 
-        setDevices(clients);
+        console.log("[Settings.jsx]: ", clients);
+
+        if (clients.length !== 0) {
+            setDevices(clients);
+        }
+
     }
 
     // Discover Clients on mount
