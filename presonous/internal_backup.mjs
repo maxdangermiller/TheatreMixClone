@@ -1583,7 +1583,7 @@ var Client = class {
 		return this._writeBytes(createPacket(...params));
 	}
 	async _writeBytes(bytes) {
-		console.log(bytes)
+		// console.log(bytes)
 		return new Promise((resolve) => {
 			this.conn.write(bytes, null, (resp) => {
 				resolve(resp);
@@ -1767,18 +1767,18 @@ var Client = class {
 			controlled_chans = Array.from({ length: this.channelCounts["LINE"] }, (_, index) => index + 1);
 		} 
 		
-		console.log(`Assigning DCA #${selector.channel} to channels ${assign_chans}`);
+		// console.log(`Assigning DCA #${selector.channel} to channels ${assign_chans}`);
 
 		// Loop through every line in the DCA
 		for (let n of controlled_chans) {
 			const path = `${targetChanString}/line${n}`;
 			const cur_state = this.state.get(path);
 
-			console.log(`path: ${path}, in assign chans ${assign_chans}: ${assign_chans.includes(n)}`);
+			// console.log(`path: ${path}, in assign chans ${assign_chans}: ${assign_chans.includes(n)}`);
 			
 			// If it's in assigned channels, we should assign it
 			if (assign_chans.includes(n)) {
-				console.log(`Adding chan #${n}`);
+				// console.log(`Adding chan #${n}`);
 				// const bytes = Buffer.concat([Buffer.from(targetChanString), Buffer.from('2f6c696e653100000000000000', 'hex')]);
 
 				if (cur_state !== 1 || true) {
@@ -1794,7 +1794,7 @@ var Client = class {
 			}
 			// Otherwise unassign it
 			else if (cur_state !== 0) {
-				console.log(`Removing chan #${n}`);
+				// console.log(`Removing chan #${n}`);
 				// this._sendPacket(MessageCode.ParamValue, Buffer.concat([Buffer.from(targetChanString + "\0\0\0")]));
 				this._sendPacket(
 					MessageCode.ParamValue,

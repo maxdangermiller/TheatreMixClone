@@ -27,7 +27,7 @@ const convert_ip_to_octets = (ip_address) => {
         return;
     }
 
-    console.log(octs)
+    // console.log(octs)
 
     return octs;
 }

@@ -35,7 +35,7 @@ let current_cue = null;
  * @returns {Promise} discovery Info
  * @async
  */
-const discover = async (timeout) => {
+const discover = async (_event, {timeout}) => {
 	const discovery = new Discovery();
 	const devices = [];
 
@@ -85,7 +85,7 @@ const init_low_vol_arr = () => {
  */
 const connect = async (_event, {host, port}) => {
 	console.log(`[SOUND:connect]: Connecting to Sound Board at ip address: ${host} on port ${port}.`);
-
+	
 	presonusClient = new Client({host: host, port: port}, {autoreconnect: true, logLevel: "debug"});
 
 	presonusClient.on('connected', () => {
@@ -107,14 +107,17 @@ const connect = async (_event, {host, port}) => {
 	presonusClient.on('meter', handleMeteringData);
 	presonusClient.meterSubscribe()
 	
-	
-	await presonusClient.connect().then(() => {
-		console.log("[SOUND:connect]: Connected to Sound Board.")
-		console.log(`[SOUND:connect]: Version ${presonusClient.state.get('global.mixer_version')}`);
-		
-		// presonusClient.meterSubscribe()
-		console.log("[SOUND:connect]: Connected to Metering Data.");
-	});
+	try {
+		await presonusClient.connect().then(() => {
+			console.log("[SOUND:connect]: Connected to Sound Board.")
+			console.log(`[SOUND:connect]: Version ${presonusClient.state.get('global.mixer_version')}`);
+			
+			// presonusClient.meterSubscribe()
+			console.log("[SOUND:connect]: Connected to Metering Data.");
+		});
+	} catch (error) {
+		console.warn(error);
+	}
 }
 
 
@@ -273,9 +276,11 @@ const write_cue = async (_event, {cue_object}) => {
 	}
 	*/
 	
+	init_channels();
+
 	current_cue = cue_object;
 	
-	console.log("[SOUND:write_cue]: Writing Cue: ", cue_object)
+	console.log("[SOUND:write_cue]: Writing Cue")
 
 	if (presonusClient === null) {
 		console.warn("Client is not yet connected!")
@@ -291,10 +296,11 @@ const write_cue = async (_event, {cue_object}) => {
 				cue_object[`dca0${i}Channels`].split(",").map(Number),
 				CONTROLLED_LINES
 			);
-			console.log(`Assigned DCA #${i}`);
+			// console.log(`Assigned DCA #${i}`);
 		}
 	} catch (error) {
 		console.log("[SOUND:write_cue]: Failed to write DCA assignments", error);
+		return;
 	}
 
 	
@@ -427,15 +433,27 @@ const init_channels = async () => {
 	const board_state = presonusClient.dumpState().internal.children;
 	const line_state = board_state.line.children;
 
-	for (let ch of CONTROLLED_LINES) {
-		// find default channel profile
-		const profile = get_profile(ch);
+	console.log(CONTROLLED_LINES);
+	for (let ch_num of CONTROLLED_LINES) {
+		console.log(ch_num);
+	}
 
-		const label = profile.label === null ? profile.name : profile.label;
-
-		if (line_state[`ch${ch["channel"]}`].username != label) {
-			presonusClient.setName({type: 'LINE', channel: ch}, label);
+	try {
+		for (let ch_num of CONTROLLED_LINES) {
+			// find default channel profile
+			const profile = get_profile(ch_num);
+			
+			const label = profile === null ? "" : profile.label === null ? profile.name : profile.label;
+	
+			console.log("Sound.js --> ", line_state[`ch${ch_num}`].children.username);
+	
+	
+			if (line_state[`ch${ch_num}`].children.username != label) {
+				presonusClient.setName({type: 'LINE', channel: ch_num}, label);
+			}
 		}
+	} catch (error) {
+		console.log("[Sound.js] Error: ", error);
 	}
 }
 
