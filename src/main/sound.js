@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import dgram from 'node:dgram';
+import os from 'node:os';
 
-import { Client, Discovery } from '@featherbear/presonus-studiolive-api';
+import { Client } from '@featherbear/presonus-studiolive-api';
 import {getShow} from './showManager.js';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
@@ -25,45 +27,176 @@ let presonusClient = null;
 
 const CONTROLLED_LINES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
+// UCNet ports. Consoles broadcast a "DA" announce packet from CONTROL_PORT to
+// 255.255.255.255:DISCOVERY_PORT roughly every 2.5 seconds.
+const CONTROL_PORT = 53000;
+const DISCOVERY_PORT = 47809;
+const DEFAULT_DISCOVERY_TIMEOUT = 10000;
+
+// How long a single TCP attempt may take, and how long we keep retrying before giving up
+const CONNECT_ATTEMPT_TIMEOUT = 5000;
+const CONNECT_DEADLINE = 15000;
+
 /** @type {Cue} */
 let current_cue = null;
 
+/** @type {Promise<{ok: boolean, error?: string}>} */
+let pending_connect = null;
+
+/** @type {Promise<{devices: Object[], error?: string}>} */
+let pending_discovery = null;
+
+
+/**
+ * Parse a UCNet "DA" discovery announcement
+ * Layout: "UC\0\x01" + 2 bytes + "DA" + 4 C-bytes + 20 bytes + null separated strings
+ *         (model, device class, serial, friendly name)
+ * @param {Buffer} packet
+ * @returns {{model: String, serial: String, name: String} | null}
+ */
+const parse_discovery_packet = (packet) => {
+	if (packet.length < 32 || packet.subarray(0, 4).toString('latin1') !== "UC\0\x01") return null;
+	if (packet.subarray(6, 8).toString() !== "DA") return null;
+
+	const [model, _device_class, serial, name] = packet.subarray(32).toString('utf8').split("\0");
+	if (!serial) return null;
+
+	return {model, serial, name: name || model};
+}
 
 /**
  * Handle Presonus Discovery
+ * Listens for console announcements and streams each one to the renderer as it is found.
+ * @param {Event} event
  * @param {Number} timeout in ms
- * @returns {Promise} discovery Info
+ * @returns {Promise<{devices: Object[], error?: String}>} discovered devices
  * @async
  */
-const discover = async (_event, {timeout}) => {
-	const discovery = new Discovery();
-	const devices = [];
+const discover = async (event, {timeout}) => {
+	// Only one discovery socket at a time; extra callers share the running scan
+	if (pending_discovery !== null) {
+		return pending_discovery;
+	}
 
-	console.log("[SOUND:discover]: Discovering PreSonous Consoles on the Network!")
+	if (!Number.isFinite(timeout) || timeout <= 0) {
+		timeout = DEFAULT_DISCOVERY_TIMEOUT;
+	}
 
-	/*
-	return [
-		{
-			name: "StudioLive 32 Hayden",
-			serial: "SD3E19010055",
-			ip: "169.254.4.171",
-			port: "53000",
-			timestamp: "Right now"
+	console.log(`[SOUND:discover]: Discovering PreSonus Consoles on the Network for ${timeout}ms`);
+
+	pending_discovery = new Promise((resolve) => {
+		const devices = new Map();
+		const socket = dgram.createSocket({type: 'udp4', reuseAddr: true});
+		let finished = false;
+		let timer = null;
+
+		const finish = (error) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			try { socket.close(); } catch {}
+			pending_discovery = null;
+
+			console.log(`[SOUND:discover]: Found ${devices.size} console(s)`, error ?? "");
+			resolve({devices: [...devices.values()], error});
 		}
-	]
-	*/
 
-	return new Promise((resolve) => {
-		discovery.on('discover', (device) => {
-			devices.push(device);
+		socket.on('error', (err) => {
+			console.warn("[SOUND:discover]: Discovery socket error", err);
+
+			if (err.code === 'EADDRINUSE') {
+				finish(`Discovery port ${DISCOVERY_PORT} is in use by another app (likely Universal Control). Quit it and rescan.`);
+			} else {
+				finish(`Discovery failed: ${err.code ?? err.message}`);
+			}
 		});
 
-		discovery.start(timeout);
+		socket.on('message', (packet, rinfo) => {
+			const parsed = parse_discovery_packet(packet);
+			if (parsed === null) return;
 
-		setTimeout(() => {
-			resolve(devices);
-		}, timeout + 500);
+			const is_new = !devices.has(parsed.serial);
+			const device = {
+				...parsed,
+				ip: rinfo.address,
+				port: CONTROL_PORT,
+				timestamp: new Date().toLocaleTimeString(),
+			};
+			devices.set(parsed.serial, device);
+
+			if (is_new) {
+				console.log("[SOUND:discover]: Found console", device);
+				if (!event.sender.isDestroyed()) {
+					event.sender.send('presonus:device-found', device);
+				}
+			}
+		});
+
+		socket.bind(DISCOVERY_PORT, '0.0.0.0', () => {
+			socket.setBroadcast(true);
+		});
+
+		timer = setTimeout(() => finish(), timeout);
 	});
+
+	return pending_discovery;
+}
+
+/**
+ * Find the local IPv4 address on the same subnet as the console.
+ * Binding to it stops macOS from sending link-local (169.254.x.x) traffic out of the
+ * wrong interface (e.g. Wi-Fi) when the console is plugged into Ethernet.
+ * @param {String} host console IP
+ * @returns {String | undefined} local address
+ */
+const find_local_address = (host) => {
+	const to_int = (ip) => ip.split(".").reduce((acc, oct) => ((acc << 8) | parseInt(oct)) >>> 0, 0);
+	const host_int = to_int(host);
+	const matches = [];
+
+	for (const [iface, addrs] of Object.entries(os.networkInterfaces())) {
+		for (const addr of addrs ?? []) {
+			if (addr.family !== 'IPv4' || addr.internal) continue;
+
+			const mask = to_int(addr.netmask);
+			if ((to_int(addr.address) & mask) === (host_int & mask)) {
+				matches.push({iface, address: addr.address});
+			}
+		}
+	}
+
+	if (matches.length === 0) {
+		console.warn(`[SOUND:connect]: No network interface is on the same subnet as ${host}. Check the cable / IP settings.`);
+		return undefined;
+	}
+
+	if (matches.length > 1) {
+		console.warn(`[SOUND:connect]: Multiple interfaces are on ${host}'s subnet, using the first:`, matches);
+	}
+
+	console.log(`[SOUND:connect]: Using local interface ${matches[0].iface} (${matches[0].address})`);
+	return matches[0].address;
+}
+
+/**
+ * Human readable explanation for a socket error code
+ * @param {Error} err
+ * @returns {String}
+ */
+const describe_socket_error = (err) => {
+	switch (err?.code) {
+		case 'EHOSTUNREACH':
+		case 'ENETUNREACH':
+			return `${err.code}: macOS could not reach the console. Allow this app (or Terminal/VS Code when running "npm start") under System Settings → Privacy & Security → Local Network.`;
+		case 'ECONNREFUSED':
+			return `${err.code}: The console refused the connection. It may have too many remote clients connected.`;
+		case 'ETIMEDOUT':
+			return `${err.code}: No response from the console. Check the IP address and that it is on the same network.`;
+		case 'EADDRNOTAVAIL':
+			return `${err.code}: The local network interface went away. Check the cable.`;
+		default:
+			return err ? `${err.code ?? ""} ${err.message}` : "Unknown error";
+	}
 }
 
 /**
@@ -81,43 +214,113 @@ const init_low_vol_arr = () => {
  * @param {Event} _event 
  * @param {String} host 
  * @param {int} port
+ * @returns {Promise<{ok: boolean, error?: String}>} connection result
  * @async
  */
 const connect = async (_event, {host, port}) => {
-	console.log(`[SOUND:connect]: Connecting to Sound Board at ip address: ${host} on port ${port}.`);
-	
-	presonusClient = new Client({host: host, port: port}, {autoreconnect: true, logLevel: "debug"});
+	// Ignore repeat clicks while an attempt is already running
+	if (pending_connect !== null) {
+		console.log("[SOUND:connect]: Connection attempt already in progress");
+		return pending_connect;
+	}
 
-	presonusClient.on('connected', () => {
+	pending_connect = do_connect(host, Number(port) || CONTROL_PORT).finally(() => {
+		pending_connect = null;
+	});
+
+	return pending_connect;
+}
+
+/**
+ * Tear down the current client so it stops reconnecting in the background
+ */
+const disconnect = () => {
+	if (presonusClient === null) return;
+
+	console.log("[SOUND:disconnect]: Disconnecting from Sound Board.");
+	presonusClient.disconnect();
+	presonusClient = null;
+}
+
+/**
+ * @param {String} host
+ * @param {Number} port
+ * @returns {Promise<{ok: boolean, error?: String}>}
+ */
+const do_connect = async (host, port) => {
+	console.log(`[SOUND:connect]: Connecting to Sound Board at ip address: ${host} on port ${port}.`);
+
+	// Only ever keep one client alive, otherwise old ones keep reconnecting forever
+	disconnect();
+
+	const client = new Client({host: host, port: port}, {
+		autoreconnect: true,
+		logLevel: "debug",
+		connectTimeout: CONNECT_ATTEMPT_TIMEOUT,
+		localAddress: find_local_address(host),
+	});
+	presonusClient = client;
+
+	let last_error = null;
+
+	client.on('socketError', (err) => {
+		// Keep the more specific error if a timeout follows it
+		if (err.code !== 'ETIMEDOUT' || last_error === null) {
+			last_error = err;
+		}
+		console.warn(`[SOUND:connect]: ${describe_socket_error(err)}`);
+	});
+
+	client.on('connected', () => {
 		console.log("Connected to the device!");
 
 		init_channels();
 	})
 
-	presonusClient.on('reconnecting', () => {
+	client.on('reconnecting', () => {
 		console.log("Reconnecting!")
 	})
-	presonusClient.on('closed', () => {
+	client.on('closed', () => {
 		console.log("Closed!");
 		open_dialog(`Console disconnected!\r\nYou will need to reconnect before it will start working again`);
 	})
 
 	init_low_vol_arr();
 
-	presonusClient.on('meter', handleMeteringData);
-	presonusClient.meterSubscribe()
-	
-	try {
-		await presonusClient.connect().then(() => {
-			console.log("[SOUND:connect]: Connected to Sound Board.")
-			console.log(`[SOUND:connect]: Version ${presonusClient.state.get('global.mixer_version')}`);
-			
-			// presonusClient.meterSubscribe()
-			console.log("[SOUND:connect]: Connected to Metering Data.");
-		});
-	} catch (error) {
-		console.warn(error);
+	client.on('meter', handleMeteringData);
+
+	let deadline_timer;
+	const deadline = new Promise((resolve) => {
+		deadline_timer = setTimeout(() => resolve(false), CONNECT_DEADLINE);
+	});
+
+	const connected = await Promise.race([client.connect().then(() => true), deadline]);
+	clearTimeout(deadline_timer);
+
+	// Another connect replaced this client while we were waiting
+	if (presonusClient !== client) {
+		return {ok: false, error: "Connection was replaced by a newer attempt."};
 	}
+
+	if (!connected) {
+		const error = describe_socket_error(last_error ?? {code: 'ETIMEDOUT'});
+		console.warn(`[SOUND:connect]: Giving up after ${CONNECT_DEADLINE}ms. ${error}`);
+		disconnect();
+		return {ok: false, error};
+	}
+
+	console.log("[SOUND:connect]: Connected to Sound Board.")
+	console.log(`[SOUND:connect]: Version ${client.state.get('global.mixer_version')}`);
+
+	// Subscribe once the TCP session exists so the console actually receives the UM packet
+	try {
+		await client.meterSubscribe();
+		console.log("[SOUND:connect]: Connected to Metering Data.");
+	} catch (error) {
+		console.warn("[SOUND:connect]: Failed to subscribe to metering data", error);
+	}
+
+	return {ok: true};
 }
 
 
@@ -476,4 +679,4 @@ const set_soundcheck_labels = async () => {
 	}
 }
 
-export {discover, connect, write_cue, fire_sound_check};
+export {discover, connect, disconnect, write_cue, fire_sound_check};

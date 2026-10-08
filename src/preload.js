@@ -6,8 +6,16 @@ contextBridge.exposeInMainWorld('presonus', {
   	discover: (timeout) => 
 		ipcRenderer.invoke('presonus:discover', {timeout}),
 
+  	onDeviceFound: (callback) =>
+		ipcRenderer.on('presonus:device-found', (_event, device) => callback(device)),
+	removeDeviceFoundListener: () =>
+		ipcRenderer.removeAllListeners('presonus:device-found'),
+
   	connect: (host, port) =>
 	  	ipcRenderer.invoke('presonus:connect', { host, port }),
+
+  	disconnect: () =>
+	  	ipcRenderer.invoke('presonus:disconnect'),
 
   	set_dca: (dca) =>
 	  	ipcRenderer.invoke('presonus:set_dca', { dca }),

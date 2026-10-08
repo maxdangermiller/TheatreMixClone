@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
-import {discover, connect, write_cue, fire_sound_check} from './main/sound.js';
+import {discover, connect, disconnect, write_cue, fire_sound_check} from './main/sound.js';
 import {loadShow, getShow} from './main/showManager.js';
 
 import {handle_open_file} from './main/fileManager.js';
@@ -20,6 +20,7 @@ console.log('[MAIN] main.js loaded');
 // Subscribe all the functions
 ipcMain.handle('presonus:discover', discover);
 ipcMain.handle('presonus:connect', connect);
+ipcMain.handle('presonus:disconnect', disconnect);
 // ipcMain.handle('presonus:set_dca', set_dca);
 ipcMain.handle('presonus:write_cue', write_cue);
 ipcMain.handle('presonus:fire_sound_check', fire_sound_check);
@@ -144,6 +145,11 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
 	app.quit();
+});
+
+// Drop the console connection so it doesn't hold a stale client slot
+app.on('before-quit', () => {
+	disconnect();
 });
 
 

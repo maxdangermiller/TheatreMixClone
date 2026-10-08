@@ -1,5 +1,5 @@
 diff --git a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
-index 81eeffb..73cf59b 100644
+index 81eeffb..79d797f 100644
 --- a/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
 +++ b/node_modules/@featherbear/presonus-studiolive-api/dist/_internal.mjs
 @@ -134,32 +134,6 @@ function simplifyPathTokens(path) {
@@ -69,18 +69,18 @@ index 81eeffb..73cf59b 100644
 +				break;
 +			case 105:
 +				length = 1;
-+				break;
-+			case 85:
-+				length = 1;
-+				break;
-+			case 108:
-+				length = 4;
  				break;
 -			default:
 -				valueProcessor = decodeMap[typeByte];
++			case 85:
++				length = 1;
+ 				break;
++			case 108:
++				length = 4;
++				break;
 +			case 76:
 +				length = 8;
- 				break;
++				break;
 +			default: throw new Error(`Unknown type ${type} at position ${idx}`);
  		}
 -		if (!valueProcessor) throw new Error(`Unknown type ${typeByte} at position ${idx}`);
@@ -255,14 +255,14 @@ index 81eeffb..73cf59b 100644
 +	if (!Object.keys(Channel).includes(type)) {
 +		console.log(type);
 +		throw new Error("Invalid channel type provided")
- 	}
--	if (!Object.keys(Channel).includes(type)) throw new Error("Invalid channel type provided");
--	if (["MAIN", "TALKBACK"].includes(type)) channel = 1;
++	}
 +
 +	// If selecting MAIN or TALKBACK, force channel to be 1
 +	if (["MAIN", "TALKBACK"].includes(type)) {
 +		channel = 1;
-+	}
+ 	}
+-	if (!Object.keys(Channel).includes(type)) throw new Error("Invalid channel type provided");
+-	if (["MAIN", "TALKBACK"].includes(type)) channel = 1;
 +
 +
  	const oldChannel = channel;
@@ -287,7 +287,22 @@ index 81eeffb..73cf59b 100644
  				idBuffer,
  				Buffer.from([
  					70,
-@@ -1293,24 +1316,24 @@ var Client = class {
+@@ -1258,6 +1281,14 @@ var KeepAliveHelper = class {
+ 		}, 1e3);
+ 		this.updateTime();
+ 	}
++
++	/**
++	 * Stop sending keep-alives
++	 * @author Max Miller
++	 */
++	stop() {
++		clearInterval(this.#loop);
++	}
+ };
+ //#endregion
+ //#region src/lib/util/fileRequestUtil.ts
+@@ -1293,24 +1324,24 @@ var Client = class {
  		this.meteringClient = null;
  		this.conn = DataClient_default(this.handleRecvPacket.bind(this));
  		this.state = CacheProvider({ get: (key) => this.zlibData ? getZlibValue(this.zlibData, key) : null });
@@ -318,7 +333,7 @@ index 81eeffb..73cf59b 100644
  			this.fileDataEmitter.emit(id, data);
  		});
  	}
-@@ -1367,7 +1390,7 @@ var Client = class {
+@@ -1367,7 +1398,7 @@ var Client = class {
  	async meterSubscribe(port) {
  		port = port ?? 0;
  		this.meteringClient = await createServer.call(this, port, (meterData) => this.emit("meter", meterData));
@@ -327,8 +342,40 @@ index 81eeffb..73cf59b 100644
  	}
  	/**
  	* Unsubscribe from the metering data
-@@ -1393,13 +1416,13 @@ var Client = class {
- 				clearTimeout(fastReconnectTimer);
+@@ -1379,27 +1410,42 @@ var Client = class {
+ 	}
+ 	async connect(subscribeData) {
+ 		if (this.connectPromise) return this.connectPromise;
++		this.stopped = false;
++
++		// How long a single TCP connection attempt may take before retrying
++		const connectTimeout = this.options?.connectTimeout ?? 2e3;
++
+ 		const connectPromise = new Promise((resolve, reject) => {
+-			let fastReconnectTimer;
++			let attemptErrored = false;
+ 			logger.info({
+ 				host: this.serverHost,
+-				port: this.serverPort
++				port: this.serverPort,
++				localAddress: this.options?.localAddress
+ 			}, "Connecting to console");
+ 			const reconnect = () => {
++				if (this.stopped) return;
+ 				logger.debug("Reconnecting");
+ 				doConnect();
+ 			};
++
++			// Report socket errors instead of silently swallowing them
++			this.conn.on("error", (err) => {
++				attemptErrored = true;
++				logger.warn({ code: err.code }, "Socket error");
++				this.emit("socketError", err);
++			});
++
+ 			this.conn.addListener("connect", () => {
+-				clearTimeout(fastReconnectTimer);
++				clearTimeout(this.fastReconnectTimer);
  				this.keepAliveHelper = new KeepAliveHelper(3e3);
  				const chunkedZlibInitCallback = (data) => {
 -					this.removeListener("CK", chunkedZlibInitCallback);
@@ -346,7 +393,7 @@ index 81eeffb..73cf59b 100644
  						const getCount = (key) => Object.keys(this.state.get(key) ?? {}).length;
  						const channelCounts = {
  							LINE: getCount("line"),
-@@ -1410,17 +1433,8 @@ var Client = class {
+@@ -1410,17 +1456,8 @@ var Client = class {
  							TALKBACK: getCount("talkback"),
  							MAIN: getCount("main"),
  							DCA: getCount("filtergroup"),
@@ -364,7 +411,7 @@ index 81eeffb..73cf59b 100644
  							MONO: getCount("mono")
  						};
  						this.channelCounts = channelCounts;
-@@ -1430,11 +1444,11 @@ var Client = class {
+@@ -1430,15 +1467,16 @@ var Client = class {
  				}), new Promise((resolve) => {
  					const subscribeCallback = (data) => {
  						if (data.id === "SubscriptionReply") {
@@ -378,7 +425,12 @@ index 81eeffb..73cf59b 100644
  				})]).then(() => {
  					this.keepAliveHelper.start((packets) => {
  						packets.forEach((bytes) => this._writeBytes(bytes));
-@@ -1452,7 +1466,7 @@ var Client = class {
+ 					}, () => {
++						if (this.stopped) return;
+ 						if (!this.conn.destroyed) this.conn.destroy();
+ 						logger.info("Connection closed");
+ 						this.emit("closed");
+@@ -1452,22 +1490,47 @@ var Client = class {
  					this.emit("connected");
  					resolve(this);
  				});
@@ -387,8 +439,43 @@ index 81eeffb..73cf59b 100644
  			});
  			const doConnect = () => {
  				this.conn.destroy();
-@@ -1467,7 +1481,7 @@ var Client = class {
+-				fastReconnectTimer = setTimeout(() => reconnect(), 2e3);
+-				this.conn.connect(this.serverPort, this.serverHost);
+-				this.conn.once("error", () => {});
++				attemptErrored = false;
++				clearTimeout(this.fastReconnectTimer);
++				this.fastReconnectTimer = setTimeout(() => {
++					if (!attemptErrored) {
++						const err = new Error(`Connection attempt timed out after ${connectTimeout}ms`);
++						err.code = "ETIMEDOUT";
++						this.emit("socketError", err);
++					}
++					reconnect();
++				}, connectTimeout);
++				this.conn.connect({
++					port: this.serverPort,
++					host: this.serverHost,
++					localAddress: this.options?.localAddress
++				});
+ 			};
+ 			doConnect();
+ 		});
+ 		this.connectPromise = connectPromise;
+ 		return connectPromise;
  	}
++
++	/**
++	 * Immediately tear down the connection and stop all reconnect / keep-alive timers
++	 * @author Max Miller
++	 */
++	disconnect() {
++		this.stopped = true;
++		clearTimeout(this.fastReconnectTimer);
++		this.keepAliveHelper?.stop();
++		this.meterUnsubscribe();
++		this.conn.destroy();
++		this.connectPromise = null;
++	}
  	async close() {
  		this.meterUnsubscribe();
 -		await this._sendPacket("JM", unsubscribePacket).then(() => {
@@ -396,7 +483,7 @@ index 81eeffb..73cf59b 100644
  			this.conn.destroy();
  		});
  	}
-@@ -1478,17 +1492,17 @@ var Client = class {
+@@ -1478,17 +1541,17 @@ var Client = class {
  		let [messageCode, data] = analysePacket(packet);
  		if (messageCode === null) return;
  		const handlers = {
@@ -425,7 +512,7 @@ index 81eeffb..73cf59b 100644
  		};
  		if (Object.hasOwn(handlers, messageCode)) data = handlers[messageCode]?.call?.(this, data);
  		else console.warn("Unhandled message code", messageCode);
-@@ -1550,7 +1564,7 @@ var Client = class {
+@@ -1550,7 +1613,7 @@ var Client = class {
  			};
  			const eventName = id.toString();
  			this.fileDataEmitter.once(eventName, callback);
@@ -434,8 +521,15 @@ index 81eeffb..73cf59b 100644
  				idBuffer,
  				Buffer.from("List" + key.toString()),
  				Buffer.from([0, 0])
-
-@@ -1579,7 +1594,7 @@ var Client = class {
+@@ -1569,6 +1632,7 @@ var Client = class {
+ 		return this._writeBytes(createPacket(...params));
+ 	}
+ 	async _writeBytes(bytes) {
++		// console.log(bytes)
+ 		return new Promise((resolve) => {
+ 			this.conn.write(bytes, null, (resp) => {
+ 				resolve(resp);
+@@ -1579,7 +1643,7 @@ var Client = class {
  	* @param projFile e.g 01.Showfile.proj
  	*/
  	recallProject(projFile) {
@@ -444,7 +538,7 @@ index 81eeffb..73cf59b 100644
  			id: "RestorePreset",
  			url: "presets",
  			presetTarget: "",
-@@ -1593,7 +1608,7 @@ var Client = class {
+@@ -1593,7 +1657,7 @@ var Client = class {
  	* @param sceneFile e.g. 02.SceneBackup.scn
  	*/
  	recallProjectScene(projFile, sceneFile) {
@@ -453,7 +547,7 @@ index 81eeffb..73cf59b 100644
  			id: "RestorePreset",
  			url: "presets",
  			presetTarget: "",
-@@ -1602,7 +1617,7 @@ var Client = class {
+@@ -1602,7 +1666,7 @@ var Client = class {
  		}));
  	}
  	recallChannelStrip(selector, chanFile) {
@@ -462,7 +556,7 @@ index 81eeffb..73cf59b 100644
  			id: "RestorePreset",
  			url: "presets",
  			presetTarget: parseChannelString(selector, [
-@@ -1649,13 +1664,13 @@ var Client = class {
+@@ -1649,13 +1713,13 @@ var Client = class {
  		const shouldInvert = !!selector.mixType;
  		let state = status === "toggle" ? !this.state.get(targetString) : status;
  		if (status !== "toggle" && shouldInvert) state = !state;
@@ -478,7 +572,7 @@ index 81eeffb..73cf59b 100644
  		if (selector.mixType) targetString += `/assign_${selector.mixType.toLowerCase()}${selector.mixNumber}`;
  		else targetString += "/mute";
  		return targetString;
-@@ -1682,7 +1697,7 @@ var Client = class {
+@@ -1682,7 +1746,7 @@ var Client = class {
  		const shouldInvert = !!selector.mixType;
  		let state = status === "toggle" ? !this.state.get(targetString) : status;
  		if (status !== "toggle" && shouldInvert) state = !state;
@@ -487,7 +581,7 @@ index 81eeffb..73cf59b 100644
  	}
  	/**
  	* @private
-@@ -1693,7 +1708,7 @@ var Client = class {
+@@ -1693,7 +1757,7 @@ var Client = class {
  		return targetString;
  	}
  	setColor(selector, hex, alpha = 255) {
@@ -496,7 +590,7 @@ index 81eeffb..73cf59b 100644
  			Buffer.from(`${parseChannelString(selector)}/color\x00\x00\x00`),
  			Buffer.from(hex, "hex"),
  			Buffer.from([alpha])
-@@ -1708,6 +1723,95 @@ var Client = class {
+@@ -1708,6 +1772,96 @@ var Client = class {
  	getColour(...args) {
  		return this.getColor.apply(this, args);
  	}
@@ -509,6 +603,7 @@ index 81eeffb..73cf59b 100644
 +	 */
 +	setName(selector, name) {
 +		if (selector.type === "LINE") {
++			console.log(`${parseChannelString(selector)}/username\0\0\0${name}\0`);
 +			this._sendPacket(
 +				MessageCode.ParamString,
 +				Buffer.from(
@@ -592,7 +687,7 @@ index 81eeffb..73cf59b 100644
  	/**
  	* For a mono channel, the pan value is the pan value from 0 (hard left) to 100 (hard right)
  	* For a stereo channel, the pan value is the width from 0 to 100 (stereo)
-@@ -1726,35 +1830,60 @@ var Client = class {
+@@ -1726,35 +1880,60 @@ var Client = class {
  			default: throw new Error("Unexpected mix type");
  		}
  		else channelString += "/" + (isStereo ? "stereopan" : "pan");
@@ -665,7 +760,7 @@ index 81eeffb..73cf59b 100644
  	_setLevel(selector, targetLevel, duration = 0) {
  		const targetString = this._getLevelString(selector);
  		const assertReturn = () => {
-@@ -1766,7 +1895,7 @@ var Client = class {
+@@ -1766,7 +1945,7 @@ var Client = class {
  			});
  		};
  		const set = (level) => {
@@ -674,7 +769,7 @@ index 81eeffb..73cf59b 100644
  		};
  		if (!duration) {
  			set(targetLevel);
-@@ -1780,6 +1909,7 @@ var Client = class {
+@@ -1780,6 +1959,7 @@ var Client = class {
  			});
  		});
  	}
@@ -682,7 +777,7 @@ index 81eeffb..73cf59b 100644
  	/**
  	* Set volume (decibels)
  	*
-@@ -1789,6 +1919,7 @@ var Client = class {
+@@ -1789,6 +1969,7 @@ var Client = class {
  	async setChannelVolumeLogarithmic(selector, decibel, duration) {
  		return this._setLevel(selector, logVolumeToLinear(decibel), duration);
  	}
@@ -690,7 +785,7 @@ index 81eeffb..73cf59b 100644
  	/**
  	* Set volume (pseudo intensity)
  	*
-@@ -1801,6 +1932,7 @@ var Client = class {
+@@ -1801,6 +1982,7 @@ var Client = class {
  	async setChannelVolumeLinear(selector, linearLevel, duration) {
  		return this._setLevel(selector, linearLevel, duration);
  	}

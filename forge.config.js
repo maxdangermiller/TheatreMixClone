@@ -14,6 +14,10 @@ module.exports = {
 		*/
 		icon: './build/icons/tmps',
 		osxSign: false, // Disables the blocking macOS keychain lookup
+		// macOS 15+ blocks LAN traffic (console discovery + control) unless the app declares this
+		extendInfo: {
+			NSLocalNetworkUsageDescription: 'Presonus TheatreMix needs local network access to find and control your StudioLive console.',
+		},
 		ignore: [/node_modules\/(?!(better-sqlite3|bindings|file-uri-to-path)\/)/],
 		ignore: [
 		/^\/src/,        // Ignores your raw frontend source code

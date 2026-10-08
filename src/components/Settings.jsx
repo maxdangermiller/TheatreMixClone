@@ -70,6 +70,8 @@ const Settings = () => {
     const [isHovered, setIsHovered] = useState(DEFAULT_HOVER_STATE);
     const [devices, setDevices] = useState([]);
     const [selRow, setSelRow] = useState(-1);
+    const [status, setStatus] = useState("");
+    const [connecting, setConnecting] = useState(false);
     
     const DISABLED_BTN_STYLE = {
         ...BUTTON_STYLE,
@@ -124,7 +126,7 @@ const Settings = () => {
     }
 
     const disconnect = () => {
-        
+        window.presonus.disconnect();
     }
 
     const apply = () => {
@@ -142,14 +144,15 @@ const Settings = () => {
         console.log(board);
 
 		if (!is_ip_valid(board.ip)) {
-			setValid(false);
+			setStatus(`Invalid IP address '${board.ip}'`);
 		}
 		else {
 			console.log(`Connecting to console at '${board.ip}' on port ${board.port}.`)
 
-			try {
-				console.log('Connecting...');
+			setConnecting(true);
+			setStatus(`Connecting to ${board.ip}...`);
 
+			try {
 				const result = await window.presonus.connect(
 					board.ip,
 					board.port
@@ -157,36 +160,58 @@ const Settings = () => {
 
 				console.log('Connection result:', result);
 
-                window.close();
+				if (result?.ok) {
+					window.close();
+				} else {
+					setStatus(`Connection failed: ${result?.error ?? "Unknown error"}`);
+				}
 			} catch (error) {
 				console.error('Connection failed:', error);
+				setStatus(`Connection failed: ${error.message}`);
+			} finally {
+				setConnecting(false);
 			}
 		}
     }
 
     const start_discovery = async () => {
-        // Set a default row while we're waiting on the actual discovery
+        // Placeholder row until a real console announces itself
         setDevices([{
-			name: "StudioLive 32 Hayden",
+			name: "StudioLive 32 Hayden (placeholder)",
 			serial: "SD3E19010055",
 			ip: "169.254.4.171",
 			port: 53000,
-			timestamp: Date.now()
+			timestamp: "-",
+			placeholder: true
 		}]);
+        setSelRow(-1);
+        setStatus("Searching for consoles...");
 
-        const clients = await window.presonus.discover(30000);
+        const {devices: found, error} = await window.presonus.discover(10000);
 
-        console.log("[Settings.jsx]: ", clients);
+        console.log("[Settings.jsx]: ", found, error);
 
-        if (clients.length !== 0) {
-            setDevices(clients);
+        if (error) {
+            setStatus(error);
+        } else if (found.length === 0) {
+            setStatus("No consoles found. On macOS, make sure Local Network access is allowed for this app.");
+        } else {
+            setStatus("");
         }
-
     }
 
-    // Discover Clients on mount
+    // Show consoles as soon as they are found, then discover on mount
     useEffect(() => {
+        window.presonus.onDeviceFound((device) => {
+            setDevices((prev) => [
+                ...prev.filter((d) => !d.placeholder && d.serial !== device.serial),
+                device
+            ]);
+        });
+
         start_discovery();
+
+        return () => window.presonus.removeDeviceFoundListener();
     }, [])
 
     return (
@@ -225,7 +250,7 @@ const Settings = () => {
                     </tbody>
 
                 </table>
-                <br/>
+                <p style={{color: TEXT_COLOR, fontFamily: 'Arial', minHeight: "1.2em", margin: "8px 0"}}>{status}</p>
                 <span style={{display: "flex", gap: "30px"}}>
                     <button 
                         style={RESCAN_BTN_STYLE} 
@@ -292,13 +317,13 @@ const Settings = () => {
                         </button>
 
                         <button 
-                            style={selRow != -1 ? OK_BTN_STYLE : DISABLED_BTN_STYLE} 
+                            style={selRow != -1 && !connecting ? OK_BTN_STYLE : DISABLED_BTN_STYLE}
                             onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: true})}
                             onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: false})}
                             onClick={ok}
-                            disabled={selRow == -1}
+                            disabled={selRow == -1 || connecting}
                         >
-                            OK
+                            {connecting ? "Connecting..." : "OK"}
                         </button>
                     </span>
                 </div>
