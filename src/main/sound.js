@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import dgram from 'node:dgram';
 import os from 'node:os';
+import { EventEmitter } from 'node:events';
 
 import { Client } from '@featherbear/presonus-studiolive-api';
 import {getShow} from './showManager.js';
+import {DEFAULT_DCA_LEVEL, MIN_DCA_LEVEL, get_dca_level} from '../utils/dca_levels.js';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
-import open_dialog from './dialog.js';
 import Actor from '../models/Actor.js';
 import Profile from '../models/Profile.js';
 
@@ -43,8 +44,49 @@ let current_cue = null;
 /** @type {Promise<{ok: boolean, error?: string}>} */
 let pending_connect = null;
 
+/**
+ * Console connection status (shown on the toolbar's Console Setup icon)
+ * @typedef {Object} ConsoleStatus
+ * @property {'disconnected' | 'connecting' | 'connected'} state
+ * @property {String} [host]
+ * @property {String} [name] console name from discovery
+ * @property {String} [message] e.g. why it disconnected
+ */
+
+/** @type {ConsoleStatus} */
+let console_status = {state: 'disconnected'};
+
+const consoleEvents = new EventEmitter();
+
+/**
+ * Update the connection status and tell every window
+ * @param {ConsoleStatus} status 
+ */
+const set_console_status = (status) => {
+	console_status = status;
+	consoleEvents.emit('status', status);
+
+	for (const window of BrowserWindow.getAllWindows()) {
+		if (!window.isDestroyed()) window.webContents.send('console-status', status);
+	}
+}
+
+const get_console_status = () => console_status;
+
 /** @type {Promise<{devices: Object[], error?: string}>} */
 let pending_discovery = null;
+
+/**
+ * What was last written to each DCA, so unchanged DCAs aren't touched
+ * @type {Object<number, {channels: String, label: String}>}
+ */
+let applied_dcas = {};
+
+/**
+ * Line usernames last written to the console, so unchanged names aren't resent
+ * @type {Object<number, String>}
+ */
+let line_names = {};
 
 
 /**
@@ -217,14 +259,14 @@ const init_low_vol_arr = () => {
  * @returns {Promise<{ok: boolean, error?: String}>} connection result
  * @async
  */
-const connect = async (_event, {host, port}) => {
+const connect = async (_event, {host, port, name}) => {
 	// Ignore repeat clicks while an attempt is already running
 	if (pending_connect !== null) {
 		console.log("[SOUND:connect]: Connection attempt already in progress");
 		return pending_connect;
 	}
 
-	pending_connect = do_connect(host, Number(port) || CONTROL_PORT).finally(() => {
+	pending_connect = do_connect(host, Number(port) || CONTROL_PORT, name).finally(() => {
 		pending_connect = null;
 	});
 
@@ -234,24 +276,29 @@ const connect = async (_event, {host, port}) => {
 /**
  * Tear down the current client so it stops reconnecting in the background
  */
-const disconnect = () => {
+const disconnect = (message) => {
 	if (presonusClient === null) return;
 
 	console.log("[SOUND:disconnect]: Disconnecting from Sound Board.");
 	presonusClient.disconnect();
 	presonusClient = null;
+
+	set_console_status({state: 'disconnected', ...(typeof message === 'string' ? {message} : {})});
 }
 
 /**
  * @param {String} host
  * @param {Number} port
+ * @param {String} [name] console name, for the status tooltip
  * @returns {Promise<{ok: boolean, error?: String}>}
  */
-const do_connect = async (host, port) => {
+const do_connect = async (host, port, name) => {
 	console.log(`[SOUND:connect]: Connecting to Sound Board at ip address: ${host} on port ${port}.`);
 
 	// Only ever keep one client alive, otherwise old ones keep reconnecting forever
 	disconnect();
+
+	set_console_status({state: 'connecting', host, name});
 
 	const client = new Client({host: host, port: port}, {
 		autoreconnect: true,
@@ -273,16 +320,21 @@ const do_connect = async (host, port) => {
 
 	client.on('connected', () => {
 		console.log("Connected to the device!");
+		set_console_status({state: 'connected', host, name});
 
 		init_channels();
 	})
 
 	client.on('reconnecting', () => {
 		console.log("Reconnecting!")
+		set_console_status({state: 'connecting', host, name, message: "Connection lost, reconnecting"});
 	})
+	// Connection dropped: the client reconnects by itself, and the toolbar's Console
+	// Setup icon turns amber until it's back. (No modal dialog: a blocking error box
+	// froze the whole app, including the reconnect, until someone clicked OK.)
 	client.on('closed', () => {
-		console.log("Closed!");
-		open_dialog(`Console disconnected!\r\nYou will need to reconnect before it will start working again`);
+		console.warn("[SOUND:connect]: Lost connection to the console, reconnecting");
+		set_console_status({state: 'connecting', host, name, message: "Connection lost, reconnecting"});
 	})
 
 	init_low_vol_arr();
@@ -305,9 +357,12 @@ const do_connect = async (host, port) => {
 	if (!connected) {
 		const error = describe_socket_error(last_error ?? {code: 'ETIMEDOUT'});
 		console.warn(`[SOUND:connect]: Giving up after ${CONNECT_DEADLINE}ms. ${error}`);
-		disconnect();
+		disconnect(error);
 		return {ok: false, error};
 	}
+
+	// Fresh connection: the next cue rewrites every DCA
+	reset_console_state();
 
 	console.log("[SOUND:connect]: Connected to Sound Board.")
 	console.log(`[SOUND:connect]: Version ${client.state.get('global.mixer_version')}`);
@@ -373,24 +428,58 @@ const do_connect = async (host, port) => {
 // #endregion
 
 /**
+ * Set a channel's color on the console
+ * The API decodes the color with Buffer.from(hex, "hex"), which returns an empty
+ * buffer if the string starts with "#", so strip it first.
+ * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector
+ * @param {String} color e.g. "#ffffff"
+ */
+const set_color = (selector, color) => {
+	presonusClient.setColor(selector, color.replace(/^#/, ""));
+}
+
+/**
+ * Set a channel's fader level in dB
+ * The API call is async, so catch its errors here instead of leaving an unhandled rejection
+ * @param {import("@featherbear/presonus-studiolive-api").ChannelSelector} selector 
+ * @param {Number} level dB
+ */
+const set_level = (selector, level) => {
+	presonusClient.setChannelVolumeLogarithmic(selector, level).catch((error) => {
+		console.log(`[SOUND]: Failed to set ${selector.type} #${selector.channel} level`, error);
+	});
+}
+
+/**
+ * Get the channels assigned to a DCA in a cue
+ * Tolerates missing fields and numeric values (e.g. a cue with only labels)
+ * @param {Cue} cue
+ * @param {Number} dca DCA number (1-12)
+ * @return {Number[]} channel numbers
+ */
+const get_dca_channels = (cue, dca) => {
+	const value = cue?.[`dca${String(dca).padStart(2, "0")}Channels`];
+
+	return String(value ?? "")
+		.split(",")
+		.map(Number)
+		.filter((ch) => Number.isInteger(ch) && ch > 0);
+}
+
+/**
  * Get Cue Channels
  * @return {Number[]} channels in cue
  */
 const get_cue_channels = () => {
-	if (current_cue === null) { 
+	if (current_cue === null) {
 		return [];
 	}
 
 	let arr = [];
 
-	arr.push(current_cue['dca01Channels'].split(","));
-	arr.push(current_cue['dca02Channels'].split(","));
-	arr.push(current_cue['dca03Channels'].split(","));
-	arr.push(current_cue['dca04Channels'].split(","));
-	arr.push(current_cue['dca05Channels'].split(","));
-	arr.push(current_cue['dca06Channels'].split(","));
-	arr.push(current_cue['dca07Channels'].split(","));
-	arr.push(current_cue['dca08Channels'].split(","));
+	for (let i = 1; i <= 8; i++) {
+		arr.push(...get_dca_channels(current_cue, i));
+	}
 
 	return arr;
 }
@@ -407,7 +496,7 @@ const handleMeteringData = async (metering) => {
 
 		if (lvl <= INACTIVE_LEVEL) {	
 			if (low_volume_channels[i - 1] >= INACTIVE_MIN_TIME) {
-				presonusClient.setColor({type: "LINE", channel: i}, INACTIVE_COLOR);
+				set_color({type: "LINE", channel: i}, INACTIVE_COLOR);
 			} else {
 				low_volume_channels[i - 1]++;
 			}
@@ -418,14 +507,68 @@ const handleMeteringData = async (metering) => {
 		low_volume_channels[i - 1] = 0;
 
 		// If the channel is used in the current cue, set to live color
-		if (i in get_cue_channels()) {
-			presonusClient.setColor({type: "LINE", channel: i}, LIVE_COLOR);
+		if (get_cue_channels().includes(i)) {
+			set_color({type: "LINE", channel: i}, LIVE_COLOR);
 			continue;
 		}
 
 		// Otherwise set it to the active color
-		presonusClient.setColor({type: "LINE", channel: i}, ACTIVE_COLOR);
+		set_color({type: "LINE", channel: i}, ACTIVE_COLOR);
 	}
+}
+
+/**
+ * Forget what has been written to the console so the next cue rewrites everything
+ * (DCA assignments, levels, mutes, names, colors and line names).
+ * Called on connect and show load.
+ */
+const reset_console_state = () => {
+	applied_dcas = {};
+	line_names = {};
+}
+
+/**
+ * Write a single DCA for a cue
+ *
+ * The fader level, mute and color are only sent when the DCA's channel assignment
+ * changes (first assignment, or reassigned to different channels). If a DCA keeps
+ * the same channels from one cue to the next it's left alone, so live fader moves
+ * aren't stomped on.
+ * @param {Cue} cue_object 
+ * @param {Number} dca DCA number
+ */
+const write_dca = (cue_object, dca) => {
+	const selector = {type: 'DCA', channel: dca};
+	const channels = get_dca_channels(cue_object, dca);
+	const channels_key = [...channels].sort((a, b) => a - b).join(",");
+	const label = cue_object[`dca${String(dca).padStart(2, "0")}Label`] ?? "";
+	const previous = applied_dcas[dca];
+
+	if (previous?.channels !== channels_key) {
+		if (channels.length === 0) {
+			// Being cleared: silence it before removing the channels
+			presonusClient.mute(selector);
+			presonusClient.assign_dca(selector, channels, CONTROLLED_LINES);
+			set_level(selector, MIN_DCA_LEVEL);
+			set_color(selector, "#000000");
+		} else {
+			// Coming up: set the level before the new channels land on it
+			const level = get_dca_level(getShow()?.dcaLevels, cue_object, dca) ?? DEFAULT_DCA_LEVEL;
+
+			console.log(`[SOUND:write_cue]: DCA #${dca} -> channels ${channels_key} at ${level} dB`);
+
+			set_level(selector, level);
+			presonusClient.assign_dca(selector, channels, CONTROLLED_LINES);
+			presonusClient.unmute(selector);
+			set_color(selector, ACTIVE_COLOR);
+		}
+	}
+
+	if (previous?.label !== label) {
+		presonusClient.setName(selector, label);
+	}
+
+	applied_dcas[dca] = {channels: channels_key, label};
 }
 
 /**
@@ -479,8 +622,6 @@ const write_cue = async (_event, {cue_object}) => {
 	}
 	*/
 	
-	init_channels();
-
 	current_cue = cue_object;
 	
 	console.log("[SOUND:write_cue]: Writing Cue")
@@ -489,98 +630,22 @@ const write_cue = async (_event, {cue_object}) => {
 		console.warn("Client is not yet connected!")
 		return;
 	}
-	
-	// Write assignments
-	// filtergroup/ch1/line* - 0 or 1
-	try {
-		for (let i = 1; i <= 8; i++) {
-			presonusClient.assign_dca(
-				{type: 'DCA', channel: i}, 
-				cue_object[`dca0${i}Channels`].split(",").map(Number),
-				CONTROLLED_LINES
-			);
-			// console.log(`Assigned DCA #${i}`);
+
+	init_channels();
+
+	// Don't write to DCAs the console doesn't have (the API throws for those)
+	const console_dcas = presonusClient.channelCounts?.DCA;
+	const dca_count = console_dcas > 0 ? Math.min(8, console_dcas) : 8;
+
+	for (let i = 1; i <= dca_count; i++) {
+		try {
+			write_dca(cue_object, i);
+		} catch (error) {
+			console.log(`[SOUND:write_cue]: Failed to write DCA #${i}`, error);
+			// Unknown state, so fully rewrite this DCA on the next cue
+			applied_dcas[i] = undefined;
 		}
-	} catch (error) {
-		console.log("[SOUND:write_cue]: Failed to write DCA assignments", error);
-		return;
 	}
-
-	
-	// Write mutes
-	// filtergroup/ch?/mute - true or false
-	try {
-		for (let i = 1; i <= 8; i++) {
-
-			if (cue_object[`dca0${i}Channels`] === '') 
-			{
-				presonusClient.mute({type: 'DCA', channel: i});
-			} 
-			
-			else 
-			{
-				presonusClient.unmute({type: 'DCA', channel: i});
-			}
-		}
-		
-	} catch (error) {
-		console.log("[SOUND:write_cue]: Failed to set DCA Mutes", error);
-	}
-	
-	
-	// Write volume
-	// filtergroup/ch1/volume - 0.0 - 1.0
-	try {
-		for (let i = 1; i <= 8; i++) {
-
-			if (cue_object[`dca0${i}Channels`] === '') 
-			{
-				presonusClient.setChannelVolumeLogarithmic({type: 'DCA', channel: i}, -84);
-			} 
-			
-			else 
-			{
-				presonusClient.setChannelVolumeLogarithmic({type: 'DCA', channel: i}, -20);
-			}
-		}
-		
-	} catch (error) {
-		console.log("[SOUND:write_cue]: Failed to set DCA Volumes", error);
-	}
-	
-	
-	
-	// Write name
-	// filtergroup/ch1/name - string
-	try {
-		for (let i = 1; i <= 8; i++) {
-			presonusClient.setName({type: 'DCA', channel: i}, cue_object[`dca0${i}Label`]);
-		}
-		
-	} catch (error) {
-		console.log("[SOUND:write_cue]: Failed to set DCA Labels", error);
-	}
-
-
-	// Write Colors
-	try {
-		for (let i = 1; i <= 8; i++) {
-			if (cue_object[`dca0${i}Channels`] === '') 
-			{
-				presonusClient.setColor({type: 'DCA', channel: i}, "#000000");
-			} 
-			
-			else 
-			{
-				presonusClient.unmute({type: 'DCA', channel: i}, "#0c0076");
-			}
-		}
-		
-	} catch (error) {
-		console.log("[SOUND:write_cue]: Failed to set DCA Colors", error);
-	}
-
-	
 
 	// TODO: Write AUX assignments?
 	// filtergroup/ch1/mute_aux* - 0 or 1
@@ -604,6 +669,7 @@ const fire_sound_check = async (_event) => {
  */
 const get_profile = (ch) => {
 	const show = getShow();
+	if (!show) return null;
 
 	for (let profile of show.profiles) {
 		if (profile.channel === ch && profile.default) {
@@ -614,69 +680,84 @@ const get_profile = (ch) => {
 }
 
 /**
- * Get Actor by channel number
+ * Label for a line from its default profile (what normal cues show)
+ * @param {Number} ch channel number
+ * @returns {String}
+ */
+const get_profile_label = (ch) => {
+	const profile = get_profile(ch);
+
+	if (profile === null) return "";
+
+	return profile.label ?? profile.name ?? "";
+}
+
+/**
+ * Get the actor on a channel: the first active actor assigned to it
+ * (lowest order, then lowest id)
  * @param {Number} ch channel number
  * @returns {Actor} TheatreMix Actor
  */
 const get_actor = (ch) => {
 	const show = getShow();
+	if (!show) return null;
 
-	for (let actor of show.actors) {
-		if (actor.channel === ch && actor.active) {
-			return actor;
-		}
-	}
-	return null;
+	const actors = show.actors
+		.filter((actor) => actor.channel === ch && actor.active)
+		.sort((a, b) => (a.order - b.order) || (a.id - b.id));
+
+	return actors[0] ?? null;
 }
 
 /**
- * Initialize Channel Labels
+ * Set a line's username, skipping the send if it already shows that name
+ * @param {Number} ch channel number
+ * @param {String} name 
+ */
+const set_line_name = (ch, name) => {
+	const current = line_names[ch] ?? presonusClient.state.get(`line/ch${ch}/username`);
+
+	if (current === name) return;
+
+	presonusClient.setName({type: 'LINE', channel: ch}, name);
+	line_names[ch] = name;
+}
+
+/**
+ * Initialize Channel Labels - each line shows its default profile's label
  */
 const init_channels = async () => {
-	const board_state = presonusClient.dumpState().internal.children;
-	const line_state = board_state.line.children;
-
-	console.log(CONTROLLED_LINES);
-	for (let ch_num of CONTROLLED_LINES) {
-		console.log(ch_num);
-	}
-
 	try {
 		for (let ch_num of CONTROLLED_LINES) {
-			// find default channel profile
-			const profile = get_profile(ch_num);
-			
-			const label = profile === null ? "" : profile.label === null ? profile.name : profile.label;
-	
-			console.log("Sound.js --> ", line_state[`ch${ch_num}`].children.username);
-	
-	
-			if (line_state[`ch${ch_num}`].children.username != label) {
-				presonusClient.setName({type: 'LINE', channel: ch_num}, label);
-			}
+			set_line_name(ch_num, get_profile_label(ch_num));
 		}
 	} catch (error) {
 		console.log("[Sound.js] Error: ", error);
 	}
 }
 
+/**
+ * Line Check labels - each line shows the name of the actor on it.
+ * Lines without an actor (or when the show turns off "cueZeroActorLabels")
+ * fall back to the profile label.
+ */
 const set_soundcheck_labels = async () => {
 	if (presonusClient == null) {
 		console.warn("Console is not yet connected!");
 		return;
 	}
 
-	const board_state = presonusClient.dumpState().internal.children;
-	const line_state = board_state.line.children;
+	const use_actor_names = getShow()?.config?.cueZeroActorLabels !== "0";
 
-	for (let ch of CONTROLLED_LINES) {
-		// Find default channel actor
-		const actor = get_actor(ch);
+	try {
+		for (let ch of CONTROLLED_LINES) {
+			const actor = use_actor_names ? get_actor(ch) : null;
 
-		if (line_state[`ch${ch["channel"]}`].username != actor.name) {
-			presonusClient.setName({type: 'LINE', channel: ch["channel"]}, actor.name);
+			set_line_name(ch, actor?.name ?? get_profile_label(ch));
 		}
+	} catch (error) {
+		console.log("[SOUND:fire_sound_check]: Failed to set line check labels", error);
 	}
 }
 
-export {discover, connect, disconnect, write_cue, fire_sound_check};
+export {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status, consoleEvents};

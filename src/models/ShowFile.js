@@ -37,6 +37,12 @@ class ShowFile {
     /** @type {Config} */
     config;
 
+    /**
+     * Per-cue DCA levels in dB (stored in .tmixp files)
+     * @type {Object<string, Object<number, number>>} { "number.point": { dca: level } }
+     */
+    dcaLevels;
+
     constructor() {
 
         this.actors = [];
@@ -50,6 +56,8 @@ class ShowFile {
         this.cues = [];
 
         this.config = {};
+
+        this.dcaLevels = {};
     }
 }
 

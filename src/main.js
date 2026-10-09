@@ -1,17 +1,24 @@
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, shell, powerSaveBlocker } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
-import {discover, connect, disconnect, write_cue, fire_sound_check} from './main/sound.js';
-import {loadShow, getShow} from './main/showManager.js';
+import {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status} from './main/sound.js';
+import {showEvents, loadShow, getShow, saveShow, setDcaLevel, undoDcaLevel, redoDcaLevel, isShowDirty, confirmDiscardChanges} from './main/showManager.js';
+import {qlabEvents, syncQLab, recallQLabCue, getQLabStatus, stopQLab} from './main/qlab.js';
+import {startOscServer, stopOscServer, notifyCueFired} from './main/oscServer.js';
 
 import {handle_open_file} from './main/fileManager.js';
-import {MenuTemplate} from './main/menuManager.js';
+import {initMenu, sendViewSettings, sendMenuAction, setLockEditing} from './main/menuManager.js';
+import {getSettings} from './main/settings.js';
+import fs from 'node:fs';
 // import {open_dialog} from './main/dialog.js';
 
 import { getMainWindow, setMainWindow } from './main/windowManager.js';
 
 const SHOW_CONSOLE = true;
+
+/** Show file macOS asked us to open before the window was ready */
+let pendingOpenFile = null;
 
 
 console.log('[MAIN] main.js loaded');
@@ -20,14 +27,66 @@ console.log('[MAIN] main.js loaded');
 // Subscribe all the functions
 ipcMain.handle('presonus:discover', discover);
 ipcMain.handle('presonus:connect', connect);
-ipcMain.handle('presonus:disconnect', disconnect);
+ipcMain.handle('presonus:disconnect', () => disconnect());
+ipcMain.handle('presonus:get_status', async () => get_console_status());
 // ipcMain.handle('presonus:set_dca', set_dca);
-ipcMain.handle('presonus:write_cue', write_cue);
-ipcMain.handle('presonus:fire_sound_check', fire_sound_check);
+/**
+ * Fire a cue: recall its QLab cue, tell OSC subscribers, then write it to the console.
+ * QLab recall doesn't need a console, and is skipped on Back if the show says so
+ * (TheatreMix: Show Setup → QLab → "Suppress QLab cue recall on back button").
+ */
+ipcMain.handle('presonus:write_cue', async (event, args) => {
+	const {cue_object, back = false} = args;
+	const config = getShow()?.config ?? {};
 
-ipcMain.handle('show:load', async (_, path) => { return loadShow(path); });
+	if (config.qLabCues === "1" && cue_object.qLabCue && !(back && config.qLabSuppressBack === "1")) {
+		recallQLabCue(cue_object.qLabCue);
+	}
+
+	notifyCueFired(cue_object);
+
+	return write_cue(event, args);
+});
+
+ipcMain.handle('presonus:fire_sound_check', async (event, args) => {
+	notifyCueFired(null);
+	return fire_sound_check(event, args);
+});
+
+// Action → Test QLab Recall
+ipcMain.handle('qlab:recall', async (_, cueNumber) => recallQLabCue(cueNumber));
+ipcMain.handle('qlab:get_status', async () => getQLabStatus());
+
+ipcMain.handle('show:load', async (_, path) => {
+	// Returns null if the user cancelled because of unsaved changes
+	if (!(await confirmDiscardChanges())) { return null; }
+
+	const show = loadShow(path);
+
+	// New show: the next cue rewrites every DCA
+	reset_console_state();
+
+	return show;
+});
+
+ipcMain.handle('show:set_dca_level', async (_, {number, point, dca, level}) => {
+	return setDcaLevel(number, point, dca, level);
+});
+
+ipcMain.handle('show:undo_dca_level', async () => { return undoDcaLevel(); });
+ipcMain.handle('show:redo_dca_level', async () => { return redoDcaLevel(); });
 
 ipcMain.handle('show:get', async () => { return getShow(); });
+
+// Toolbar buttons go through the same paths as the menu
+ipcMain.handle('menu:trigger', async (_, action) => { sendMenuAction(action); });
+ipcMain.handle('app:set_lock_editing', async (_, locked) => { setLockEditing(locked); });
+ipcMain.handle('show:save', async () => { return saveShow(); });
+
+ipcMain.handle('app:get_view_settings', async () => {
+	const {rowSize, lockEditing} = getSettings();
+	return {rowSize, lockEditing};
+});
 
 ipcMain.handle('electronAPI:openFile', handle_open_file);
 // ipcMain.handle('electronAPI:openErrorDialog', (_, msg) => open_dialog(msg));
@@ -42,6 +101,9 @@ const createWindow = () => {
 	let mainWindow = new BrowserWindow({
 		width: 1200,
 		height: 800,
+		// Keeps the whole toolbar visible
+		minWidth: 900,
+		minHeight: 500,
 		
 		icon: path.join(__dirname, '../build/icons/icon1028.png'),
 
@@ -118,15 +180,33 @@ const createWindow = () => {
 
 	// On Load, open the most recent file if it exists
 	mainWindow.webContents.on('did-finish-load', () => {
-		const recent_docs = app.getRecentDocuments();
+		// A file double-clicked in Finder before the app was ready wins over the recent list
+		if (pendingOpenFile !== null) {
+			mainWindow.webContents.send('file-opened', pendingOpenFile);
+			pendingOpenFile = null;
+			return;
+		}
 
-		// If there isn't a recent document, then don't worry about it
-		if (recent_docs.length < 1) { return; }
+		sendViewSettings();
 
-		mainWindow.webContents.send('file-opened', recent_docs[0]);
+		// Reopen the most recent show, if it's still there
+		const recent = getSettings().recentFiles[0];
+
+		if (recent && fs.existsSync(recent)) {
+			mainWindow.webContents.send('file-opened', recent);
+		}
 	});
 
-	mainWindow.on('close', (event) => {
+	mainWindow.on('close', async (event) => {
+		if (isShowDirty()) {
+			// Hold the close until the user decides what to do with unsaved changes
+			event.preventDefault();
+
+			if (!(await confirmDiscardChanges())) { return; }
+
+			mainWindow.destroy();
+		}
+
 		app.quit()
 	})
 
@@ -150,23 +230,43 @@ app.on('window-all-closed', () => {
 // Drop the console connection so it doesn't hold a stale client slot
 app.on('before-quit', () => {
 	disconnect();
+	stopQLab();
+	stopOscServer();
 });
 
 
 // Setup Menu Bar
 app.whenReady().then(() => {
-	Menu.setApplicationMenu(MenuTemplate);
+	initMenu();
+
+	// QLab follows the open show's "Recall QLab cues" setting
+	showEvents.on('changed', () => syncQLab(getShow()));
+	qlabEvents.on('status', (status) => getMainWindow()?.webContents.send('qlab-status', status));
+
+	// TheatreMix-compatible OSC API (QLab network cues, Stream Deck...)
+	startOscServer();
+
+	// Stop macOS App Nap from throttling the app while it's in the background:
+	// throttled timers made the console and QLab heartbeats time out and drop
+	// the connections. This also stops the computer idle-sleeping while the app
+	// is open (the display can still turn off), which a show machine wants anyway.
+	powerSaveBlocker.start('prevent-app-suspension');
 });
 
 // MAC-OS Default File Handling
 app.on('open-file', (event, filePath) => {
 	event.preventDefault(); // Prevent default OS behavior
 	
-	if (app.isReady()) {
-		// loadTargetFile(filePath);
-		console.log("MacOS tried to load " + filePath + ", sending it to the frontend!");
-		app.addRecentDocument(filePath);
-		getMainWindow().webContents.send('file-opened', filePath);
-		
+	app.addRecentDocument(filePath);
+
+	const mainWindow = getMainWindow();
+
+	// Launched by double-clicking a show: the window isn't loaded yet, so open it once it is
+	if (!app.isReady() || !mainWindow || mainWindow.webContents.isLoading()) {
+		pendingOpenFile = filePath;
+		return;
 	}
+
+	console.log("MacOS tried to load " + filePath + ", sending it to the frontend!");
+	mainWindow.webContents.send('file-opened', filePath);
 });

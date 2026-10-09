@@ -17,6 +17,29 @@ module.exports = {
 		// macOS 15+ blocks LAN traffic (console discovery + control) unless the app declares this
 		extendInfo: {
 			NSLocalNetworkUsageDescription: 'Presonus TheatreMix needs local network access to find and control your StudioLive console.',
+
+			// Register .tmixp as this app's document type, shown with the app icon.
+			// The packager copies the icon above into Resources as electron.icns.
+			UTExportedTypeDeclarations: [
+				{
+					UTTypeIdentifier: 'com.maxmiller.presonus-theatremix.tmixp',
+					UTTypeDescription: 'Presonus TheatreMix Show',
+					UTTypeConformsTo: ['public.data'],
+					UTTypeIconFile: 'electron.icns',
+					UTTypeTagSpecification: {
+						'public.filename-extension': ['tmixp'],
+					},
+				},
+			],
+			CFBundleDocumentTypes: [
+				{
+					CFBundleTypeName: 'Presonus TheatreMix Show',
+					CFBundleTypeRole: 'Editor',
+					CFBundleTypeIconFile: 'electron.icns',
+					LSHandlerRank: 'Owner',
+					LSItemContentTypes: ['com.maxmiller.presonus-theatremix.tmixp'],
+				},
+			],
 		},
 		ignore: [/node_modules\/(?!(better-sqlite3|bindings|file-uri-to-path)\/)/],
 		ignore: [

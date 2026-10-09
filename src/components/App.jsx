@@ -7,6 +7,13 @@ import Editor from './Editor';
 import MenuBar from './MenuBar';
 
 
+const APP_STYLE = {
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+};
+
 const App = () => {
     const [showData, setShowData] = useState(null);
 
@@ -15,7 +22,12 @@ const App = () => {
             console.error("[renderer::load_show]: File Path cannot be blank... silly goose!");
         }
 
-        setShowData(await window.showApi.loadShow(path));
+        const show = await window.showApi.loadShow(path);
+
+        // null when the user cancelled to keep unsaved changes
+        if (show !== null) {
+            setShowData(show);
+        }
     }
 
     // Listeners for Electron
@@ -23,6 +35,11 @@ const App = () => {
         // Listen for the 'file-opened' channel exposed by preload.js
         window.electronAPI.onOpenFile((filePath) => {
             load_show(filePath)
+        });
+
+        // Main replaced the show (e.g. merged in a .tmix)
+        window.showApi.onShowUpdated((show) => {
+            setShowData(show);
         });
 
         // Listen for the 'main-log' channel exposed by preload.js
@@ -33,6 +50,7 @@ const App = () => {
         return () => {
             window.electronAPI.removeOpenFileListener();
             window.electronAPI.removeMainLogListener();
+            window.showApi.removeShowUpdatedListener();
         };
     }, []);
 
@@ -40,10 +58,11 @@ const App = () => {
         console.log("[renderer.jsx] Show Data DEBUG Log: ", showData);
     }, [showData])
 
-    return <>
-        <MenuBar load_show={load_show}/>
+    // Toolbar on top, cue list fills the rest of the window
+    return <div style={APP_STYLE}>
+        <MenuBar load_show={load_show} hasShow={showData !== null}/>
         <Editor showData={showData} setShowData={setShowData}/>
-    </>
+    </div>
 }
 
 export default App;

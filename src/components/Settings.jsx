@@ -1,147 +1,132 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import { is_ip_valid } from '../utils/ip_tools';
 
-import { BORDER_COLOR, TEXT_COLOR, HEADER_COLOR, SELECTED_COLOR } from './utils/colors.jsx';
+import { TEXT_COLOR, SELECTED_COLOR } from './utils/colors.jsx';
 
-const CONTAINER_STYLE = {
-    height: "100%", 
-    display: "flex", 
-    justifyContent: "center", 
-    alignItems: "center", 
+// Laid out like TheatreMix's Console Setup: device list on top, discovery
+// buttons under it, Disconnect / Apply bottom-left, Cancel / OK bottom-right.
+
+const WINDOW_STYLE = {
+    height: "100%",
+    display: "flex",
     flexDirection: "column",
-    padding: "6px"
+    backgroundColor: "rgb(50, 50, 50)",
+    color: TEXT_COLOR,
+    fontFamily: "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif",
+    fontSize: 14,
+    userSelect: "none",
+};
+
+// The popup is frameless, so this bar is the window's title and drag handle
+const TITLE_BAR_STYLE = {
+    WebkitAppRegion: "drag",
+    flex: "none",
+    padding: "10px 16px",
+    fontSize: 15,
+    fontWeight: 600,
+    textAlign: "center",
+    backgroundColor: "rgb(43, 43, 43)",
+    borderBottom: "1px solid rgb(30, 30, 30)",
+};
+
+const BODY_STYLE = {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    padding: "16px 20px",
+};
+
+const LIST_STYLE = {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    backgroundColor: "rgb(30, 30, 30)",
+    border: "1px solid rgb(30, 30, 30)",
 };
 
 const TABLE_STYLE = {
-	width: '100%', 
-    minHeight: 200,
-    alignItems: "start",
-	borderCollapse: 'collapse', 
-	textAlign: 'left', 
-	color: TEXT_COLOR,
-	fontFamily: 'Arial',
-    border: '2px solid ' + BORDER_COLOR,
-
-}
-
-const HEADER_ITEM_STYLE = {
-	padding: '6px',
-	border: '2px solid ' + BORDER_COLOR,
-	borderBottom: '4px solid ' + BORDER_COLOR,
-	textAlign: 'center',
-}
-
-const ROW_STYLE = {
-	height: '30px!important',
-	textAlign: 'center',
-}
-
-
-const BUTTON_STYLE = {
-    display: "inline-block",
-    fontFamily: "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif",
-    fontWeight: 400,
-    lineHeight: 1.5,
-    color: TEXT_COLOR,
-    textAlign: "center",
-    textDecoration: "none",
-    verticalAlign: "middle",
-    cursor: "pointer",
-    userSelect: "none",
-    backgroundColor: "transparent",
-    border: "1px solid #6c757d",
-    padding: "0.375rem 0.75rem 0.375rem 0.75rem",
-    fontSize: "1rem",
-    borderRadius: "0.375rem",
-    transition: "color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out",
-}
-
-const DEFAULT_HOVER_STATE = {
-    rescan:false, manual: false, advanced: false, 
-    disconnect: false, apply: false, close: false, ok: false
+    width: "100%",
+    tableLayout: "fixed",
+    borderCollapse: "collapse",
+    textAlign: "left",
 };
 
+const HEADER_CELL_STYLE = {
+    position: "sticky",
+    top: 0,
+    backgroundColor: "rgb(43, 43, 43)",
+    padding: "5px 8px",
+    fontWeight: 600,
+    fontSize: 13,
+    borderRight: "1px solid rgb(30, 30, 30)",
+    whiteSpace: "nowrap",
+};
 
-// Reusable Alert Component
+const CELL_STYLE = {
+    padding: "5px 8px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+};
+
+const FOOTER_STYLE = {
+    flex: "none",
+    display: "flex",
+    justifyContent: "space-between",
+    padding: "12px 20px 16px",
+};
+
+const BUTTON_GROUP_STYLE = {display: "flex", gap: "10px"};
+
+// Status column colours
+const STATUS_COLORS = {connected: "#3cc83c", connecting: "#e0a800"};
+
+/**
+ * Status column text for a device
+ * @param {Object} device
+ * @param {{state: String, host?: String}} consoleStatus
+ * @returns {{text: String, color?: String}}
+ */
+const device_status = (device, consoleStatus) => {
+    if (consoleStatus.host === device.ip && consoleStatus.state !== 'disconnected') {
+        return consoleStatus.state === 'connected'
+            ? {text: "Connected", color: STATUS_COLORS.connected}
+            : {text: "Connecting...", color: STATUS_COLORS.connecting};
+    }
+
+    if (device.placeholder) return {text: "Not found yet"};
+
+    return {text: `Found ${device.timestamp}`};
+}
+
 const Settings = () => {
-    const rowRefs = useRef({});
-
-    const [isHovered, setIsHovered] = useState(DEFAULT_HOVER_STATE);
     const [devices, setDevices] = useState([]);
     const [selRow, setSelRow] = useState(-1);
     const [status, setStatus] = useState("");
     const [connecting, setConnecting] = useState(false);
-    
-    const DISABLED_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        opacity: 0.65
-    };
-
-    const RESCAN_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.rescan ? "#6c757d" : "transparent"
-    }
-
-    const MANUAL_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.manual ? "#6c757d" : "transparent",
-    }
-
-    const ADVANCED_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.advanced ? "#6c757d" : "transparent",
-    }
-
-    const DISCONNECT_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.disconnect ? "#6c757d" : "transparent"
-    }
-
-    const APPLY_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.apply ? "#6c757d" : "transparent"
-    }
-
-    const CLOSE_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.close ? "#6c757d" : "transparent"
-    }
-
-    const OK_BTN_STYLE = {
-        ...BUTTON_STYLE,
-        backgroundColor: isHovered.ok ? "#6c757d" : "transparent"
-    }
-
-    const rescan = () => {
-        start_discovery();
-    }
-
-    const manual = () => {
-
-    }
-
-    const advanced = () => {
-        
-    }
-
-    const disconnect = () => {
-        window.presonus.disconnect();
-    }
-
-    const apply = () => {
-        
-    }
+    const [searching, setSearching] = useState(false);
+    const [consoleStatus, setConsoleStatus] = useState({state: 'disconnected'});
 
     const close = () => {
         window.close();
     }
-    
-    const ok = async () => {
-        if (selRow == -1) { return; }
 
-        let board = devices[selRow];
-        console.log(board);
+    const disconnect = () => {
+        window.presonus.disconnect();
+        setStatus("Disconnected.");
+    }
+
+    /**
+     * Connect to a console
+     * @param {Number} row device row (defaults to the selected one)
+     */
+    const ok = async (row = selRow) => {
+        if (row == -1 || connecting) { return; }
+
+        let board = devices[row];
 
 		if (!is_ip_valid(board.ip)) {
 			setStatus(`Invalid IP address '${board.ip}'`);
@@ -155,7 +140,8 @@ const Settings = () => {
 			try {
 				const result = await window.presonus.connect(
 					board.ip,
-					board.port
+					board.port,
+					board.placeholder ? undefined : board.name
 				);
 
 				console.log('Connection result:', result);
@@ -185,11 +171,13 @@ const Settings = () => {
 			placeholder: true
 		}]);
         setSelRow(-1);
+        setSearching(true);
         setStatus("Searching for consoles...");
 
         const {devices: found, error} = await window.presonus.discover(10000);
 
         console.log("[Settings.jsx]: ", found, error);
+        setSearching(false);
 
         if (error) {
             setStatus(error);
@@ -209,126 +197,103 @@ const Settings = () => {
             ]);
         });
 
+        const unsubscribeStatus = window.presonus.onStatus(setConsoleStatus);
+        window.presonus.getStatus().then(setConsoleStatus);
+
         start_discovery();
 
-        return () => window.presonus.removeDeviceFoundListener();
+        return () => {
+            window.presonus.removeDeviceFoundListener();
+            unsubscribeStatus();
+        };
     }, [])
 
+    // Enter = OK, Escape = Cancel, like a native dialog
+    useEffect(() => {
+        const handleKey = (event) => {
+            if (event.key === 'Escape') close();
+            if (event.key === 'Enter') ok();
+        };
+
+        window.addEventListener('keydown', handleKey);
+        return () => window.removeEventListener('keydown', handleKey);
+    }, [selRow, devices, connecting]);
+
+    const isConnected = consoleStatus.state !== 'disconnected';
+
     return (
-        <>
-            <div style={CONTAINER_STYLE}>
-                <table style={TABLE_STYLE}>
-		
-                    {/* Table Header */}
-                    <thead>
-                        <tr style={{ backgroundColor: HEADER_COLOR }}>
-                            <th style={HEADER_ITEM_STYLE}>Model</th>
-                            <th style={HEADER_ITEM_STYLE}>Serial</th>
-                            <th style={HEADER_ITEM_STYLE}>IP Address</th>
-                            <th style={HEADER_ITEM_STYLE}>Port</th>
-                            <th style={HEADER_ITEM_STYLE}>Status</th>
-                        </tr>
-                    </thead>
-                    
-                    {/* Table Body */}
-                    <tbody>
-                        {/* 3. Loop through your data array using .map() */}
-                        {devices.map((device, index) => (
-                            <tr 
-                                key={index}
-                                ref={(el) => (rowRefs.current[index] = el)}
-                                style={{...ROW_STYLE, backgroundColor: selRow == index ? SELECTED_COLOR : ""}}
-                                onClick={(e) => setSelRow(index)}
-                            >
-                                <td>{device.name}</td>
-                                <td>{device.serial}</td>
-                                <td>{device.ip}</td>
-                                <td>{device.port}</td>
-                                <td>{device.timestamp}</td>
+        <div style={WINDOW_STYLE}>
+            <div style={TITLE_BAR_STYLE}>Console Setup</div>
+
+            <div style={BODY_STYLE}>
+                <div style={LIST_STYLE}>
+                    <table style={TABLE_STYLE}>
+                        <colgroup>
+                            <col/>
+                            <col style={{width: "22%"}}/>
+                            <col style={{width: "19%"}}/>
+                            <col style={{width: "10%"}}/>
+                            <col style={{width: "18%"}}/>
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th style={HEADER_CELL_STYLE}>Model</th>
+                                <th style={HEADER_CELL_STYLE}>Serial</th>
+                                <th style={HEADER_CELL_STYLE}>IP Address</th>
+                                <th style={HEADER_CELL_STYLE}>Port</th>
+                                <th style={{...HEADER_CELL_STYLE, borderRight: "none"}}>Status</th>
                             </tr>
-                        ))}
-                    </tbody>
+                        </thead>
+                        <tbody>
+                            {devices.map((device, index) => {
+                                const deviceStatus = device_status(device, consoleStatus);
 
-                </table>
-                <p style={{color: TEXT_COLOR, fontFamily: 'Arial', minHeight: "1.2em", margin: "8px 0"}}>{status}</p>
-                <span style={{display: "flex", gap: "30px"}}>
-                    <button 
-                        style={RESCAN_BTN_STYLE} 
-                        onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, rescan: true})}
-                        onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, rescan: false})}
-                        onClick={rescan}
-                    >
-                        Rescan
-                    </button>
+                                return (
+                                    <tr
+                                        key={device.serial ?? index}
+                                        style={{
+                                            backgroundColor: selRow == index ? SELECTED_COLOR : (index % 2 ? "rgb(43, 43, 43)" : "transparent"),
+                                            cursor: "default",
+                                        }}
+                                        onClick={() => setSelRow(index)}
+                                        onDoubleClick={() => { setSelRow(index); ok(index); }}
+                                    >
+                                        <td style={CELL_STYLE} title={device.name}>{device.name}</td>
+                                        <td style={CELL_STYLE}>{device.serial}</td>
+                                        <td style={CELL_STYLE}>{device.ip}</td>
+                                        <td style={CELL_STYLE}>{device.port}</td>
+                                        <td style={{...CELL_STYLE, color: selRow == index ? TEXT_COLOR : deviceStatus.color}}>{deviceStatus.text}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
 
-                    <button 
-                        style={DISABLED_BTN_STYLE} 
-                        disabled
-                        onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, manual: true})}
-                        onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, manual: false})}
-                        onClick={manual}
-                    >
-                        Manual...
-                    </button>
+                <div style={{minHeight: "1.3em", fontSize: 13, textAlign: "center", opacity: 0.85}}>{status}</div>
 
-                    <button 
-                        style={DISABLED_BTN_STYLE} 
-                        disabled
-                        onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, advanced: true})}
-                        onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, advanced: false})}
-                        onClick={advanced}
-                    >
-                        Advanced...
+                <div style={{...BUTTON_GROUP_STYLE, justifyContent: "center"}}>
+                    <button className="dialog-button" onClick={start_discovery} disabled={searching}>Rescan</button>
+                    {/* Not built yet */}
+                    <button className="dialog-button" disabled>Manual...</button>
+                    <button className="dialog-button" disabled>Advanced...</button>
+                </div>
+            </div>
+
+            <div style={FOOTER_STYLE}>
+                <span style={BUTTON_GROUP_STYLE}>
+                    <button className="dialog-button" onClick={disconnect} disabled={!isConnected}>Disconnect</button>
+                    {/* Not built yet */}
+                    <button className="dialog-button" disabled>Apply</button>
+                </span>
+                <span style={BUTTON_GROUP_STYLE}>
+                    <button className="dialog-button" onClick={close}>Cancel</button>
+                    <button className="dialog-button primary" onClick={() => ok()} disabled={selRow == -1 || connecting}>
+                        {connecting ? "Connecting..." : "OK"}
                     </button>
                 </span>
             </div>
-            <div style={{position: "absolute", width:"100%", bottom: "10px", alignItems: "end", justifyContent: "space-between"}}>
-                <div style={{display: "flex", padding: "10px", alignItems: "end", justifyContent: "space-between", boxSizing: "border-box"}}>
-
-                    <span style={{display: "flex", gap: "15px"}}>
-                        <button 
-                            style={DISABLED_BTN_STYLE} 
-                            disabled
-                            onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, disconnect: true})}
-                            onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, disconnect: false})}
-                            onClick={disconnect}
-                        >
-                            Disconnect
-                        </button>
-
-                        <button 
-                            style={DISABLED_BTN_STYLE} 
-                            disabled
-                            onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, apply: true})}
-                            onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, apply: false})}
-                            onClick={apply}
-                        >
-                            Apply
-                        </button>
-                    </span>
-                    <span style={{display: "flex", gap: "15px"}}> 
-                        <button
-                            style={CLOSE_BTN_STYLE}
-                            onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, close: true})}
-                            onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, close: false})}
-                            onClick={close}
-                        >
-                            Cancel
-                        </button>
-
-                        <button 
-                            style={selRow != -1 && !connecting ? OK_BTN_STYLE : DISABLED_BTN_STYLE}
-                            onMouseEnter={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: true})}
-                            onMouseLeave={() => setIsHovered({...DEFAULT_HOVER_STATE, ok: false})}
-                            onClick={ok}
-                            disabled={selRow == -1 || connecting}
-                        >
-                            {connecting ? "Connecting..." : "OK"}
-                        </button>
-                    </span>
-                </div>
-            </div>
-        </>
+        </div>
     );
 }
 

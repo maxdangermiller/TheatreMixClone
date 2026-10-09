@@ -1,9 +1,111 @@
-body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
-    sans-serif;
-  margin: auto;
-  max-width: 38rem;
-  padding: 2rem;
-  background-color: rgb(42, 42, 42);
+/* Base styles for every window */
+
+*, *::before, *::after {
+	box-sizing: border-box;
 }
+
+html {
+	/* Dark native controls and scrollbars, like TheatreMix */
+	color-scheme: dark;
+}
+
+html, body, #root {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	font-family:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+		sans-serif;
+	background-color: #2a2a2a;
+	color: #fff;
+}
+
+/* #region Toolbar */
+
+.toolbar-button {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 42px;
+	height: 40px;
+	padding: 0;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: #fff;
+	cursor: pointer;
+}
+
+.toolbar-button:hover:not(:disabled) {
+	background-color: #555;
+}
+
+.toolbar-button:active:not(:disabled) {
+	background-color: #666;
+}
+
+.toolbar-button:disabled {
+	cursor: default;
+	opacity: 0.3;
+}
+
+.toolbar-button:focus-visible {
+	outline: 2px solid #005bd9;
+	outline-offset: -2px;
+}
+
+.toolbar-button.toggled {
+	background-color: #5a5a5a;
+}
+
+/* #endregion */
+
+/* #region Dialog buttons (TheatreMix-style: grey, blue default button) */
+
+.dialog-button {
+	min-width: 84px;
+	padding: 5px 14px;
+	border: none;
+	border-radius: 5px;
+	font: inherit;
+	color: #fff;
+	background-color: rgb(70, 70, 70);
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.dialog-button:hover:not(:disabled) {
+	background-color: rgb(85, 85, 85);
+}
+
+.dialog-button:active:not(:disabled) {
+	background-color: rgb(110, 110, 110);
+}
+
+.dialog-button.primary {
+	background-color: rgb(20, 80, 175);
+}
+
+.dialog-button.primary:hover:not(:disabled) {
+	background-color: rgb(35, 110, 215);
+}
+
+.dialog-button.primary:active:not(:disabled) {
+	background-color: rgb(60, 135, 240);
+}
+
+.dialog-button:disabled {
+	cursor: default;
+	color: rgb(100, 100, 100);
+	background-color: rgb(40, 40, 40);
+}
+
+.dialog-button:focus-visible {
+	outline: 2px solid #005bd9;
+	outline-offset: 2px;
+}
+
+/* #endregion */

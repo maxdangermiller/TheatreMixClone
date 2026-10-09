@@ -5,7 +5,7 @@ import { loadShow } from './showManager';
 const handle_open_file = async () => {
 	const result = await dialog.showOpenDialog({
 		properties: ['openFile'],
-		filters: [{ name: 'TheatreMix Files', extensions: ['.tmix', '.db'] }]
+		filters: [{ name: 'TheatreMix Files', extensions: ['tmix', 'tmixp', 'db'] }]
 	});
 	
 	if (result.canceled) {

@@ -8,6 +8,8 @@ import ShowFile from '../models/ShowFile';
 import Profile from '../models/Profile';
 import Config from '../models/Config';
 
+import { dca_level_key } from '../utils/dca_levels';
+
 class ShowRepository {
 
     constructor(database) {
@@ -41,7 +43,73 @@ class ShowRepository {
             ])
         );
 
+        show.dcaLevels = this.loadDcaLevels();
+
         return show;
+    }
+
+    /**
+     * Load per-cue DCA levels (only present in .tmixp files)
+     * @returns {Object} { "number.point": { dca: level } }
+     */
+    loadDcaLevels() {
+
+        const exists = this.db.get(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dcaLevels'"
+        );
+
+        if (!exists) {
+            return {};
+        }
+
+        const levels = {};
+
+        for (const row of this.db.all('SELECT number, point, dca, level FROM dcaLevels')) {
+            const key = dca_level_key(row.number, row.point);
+
+            levels[key] = levels[key] ?? {};
+            levels[key][row.dca] = row.level;
+        }
+
+        return levels;
+    }
+
+    /**
+     * Replace all per-cue DCA levels
+     * @param {Object} levels { "number.point": { dca: level } }
+     */
+    saveDcaLevels(levels) {
+
+        const save = this.db.transaction(() => {
+
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS dcaLevels (
+                    number  INTEGER NOT NULL,
+                    point   INTEGER NOT NULL,
+                    dca     INTEGER NOT NULL,
+                    level   REAL    NOT NULL,
+                    PRIMARY KEY (number, point, dca)
+                )
+            `);
+
+            this.db.run('DELETE FROM dcaLevels');
+
+            const stmt =
+                this.db.db.prepare(
+                    'INSERT INTO dcaLevels (number, point, dca, level) VALUES (?, ?, ?, ?)'
+                );
+
+            for (const [key, dcas] of Object.entries(levels)) {
+
+                const [number, point] = key.split('.').map(Number);
+
+                for (const [dca, level] of Object.entries(dcas)) {
+                    stmt.run(number, point, Number(dca), level);
+                }
+            }
+        });
+
+        save();
     }
 
     saveConfig(show) {
