@@ -21,7 +21,8 @@ brew install node@22
 cd Desktop/
 mkdir PresonusTheatreMix
 cd PresonusTheatreMix/
-git clone https://github.com/maxdangermiller/TheatreMixClone.git
+git clone https://github.com/maxdangermiller/PresonusTheatreMix.git
+cd PresonusTheatreMix/
 npm install
 npm start
 ```
@@ -30,7 +31,7 @@ npm start
 Starting in a **new terminal**, run the following commands to update the code:
 
 ```bash
-cd Desktop/PresonusTheatreMix/
+cd Desktop/PresonusTheatreMix/PresonusTheatreMix/
 rm -rf node_modules package-lock.json
 npm cache clean --force
 git pull origin
