@@ -179,6 +179,25 @@ function setDcaLevel(number, point, dca, level) {
 }
 
 /**
+ * Change a StudioLive console setting (saved in the .tmixp)
+ * @param {String} param e.g. "muteButtonMap"
+ * @param {String} value 
+ * @returns {Object<string, string>} updated console setup
+ */
+function setConsoleSetup(param, value) {
+	if (currentShow === null) {
+		throw new Error("No show is loaded");
+	}
+
+	if (currentShow.consoleSetup[param] !== value) {
+		currentShow.consoleSetup = {...currentShow.consoleSetup, [param]: value};
+		setDirty(true);
+	}
+
+	return currentShow.consoleSetup;
+}
+
+/**
  * Write a level into the show's level map
  * @param {String} key cue key
  * @param {Number} dca 
@@ -245,7 +264,9 @@ function writeTmixp(targetPath) {
 		const db = new DatabaseConnection(tempPath);
 
 		try {
-			new ShowRepository(db).saveDcaLevels(currentShow.dcaLevels);
+			const repo = new ShowRepository(db);
+			repo.saveDcaLevels(currentShow.dcaLevels);
+			repo.saveConsoleSetup(currentShow.consoleSetup);
 		} finally {
 			db.close();
 		}
@@ -411,6 +432,8 @@ async function mergeTmix() {
 	if (response !== 0) return null;
 
 	incoming.dcaLevels = kept_levels;
+	// StudioLive setup belongs to this app, not TheatreMix: keep it
+	incoming.consoleSetup = currentShow.consoleSetup;
 	currentShow = incoming;
 	contentPath = tmixPath;
 	// Level history refers to cues that may no longer exist
@@ -453,6 +476,7 @@ export {
 	getShowState,
 	isShowDirty,
 	setDcaLevel,
+	setConsoleSetup,
 	undoDcaLevel,
 	redoDcaLevel,
 	saveShow,

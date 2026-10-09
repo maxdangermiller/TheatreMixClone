@@ -14,6 +14,8 @@ import {
 	saveShow, saveShowAs, mergeTmix
 } from './showManager.js';
 import { getSettings, updateSettings, removeRecentFile } from './settings.js';
+import { getConsoleButtonReport, getLogAllConsoleMessages, setLogAllConsoleMessages } from './consoleButtons.js';
+import { getDebugLogPath } from './debugLog.js';
 
 const isMac = process.platform === 'darwin';
 
@@ -79,6 +81,40 @@ const handle_merge_tmix = async () => {
 	const show = await mergeTmix();
 	if (show !== null) {
 		getMainWindow()?.webContents.send('show-updated', show);
+	}
+}
+
+// #endregion
+
+// #region Help handlers
+
+/**
+ * Help → Console Buttons...: what's mapped, whether the mute groups are safe to use,
+ * and what presses have been seen
+ */
+const handle_console_buttons = async () => {
+	const { response } = await dialog.showMessageBox(getMainWindow(), {
+		type: 'info',
+		message: "Console Buttons",
+		detail: getConsoleButtonReport(),
+		buttons: ['OK', 'Show Debug Log'],
+		defaultId: 0,
+	});
+
+	if (response === 1) handle_show_debug_log();
+}
+
+const handle_show_debug_log = () => {
+	const logPath = getDebugLogPath();
+
+	if (fs.existsSync(logPath)) {
+		shell.showItemInFolder(logPath);
+	} else {
+		dialog.showMessageBox(getMainWindow(), {
+			type: 'info',
+			message: "Nothing has been logged yet",
+			detail: `The debug log will be created at:\n${logPath}`
+		});
 	}
 }
 
@@ -249,6 +285,16 @@ const buildTemplate = () => {
 			submenu: [
 				{ label: 'Quick Start', click: () => shell.openExternal(README_URL) },
 				{ label: 'Feature Guide', ...notImplemented },
+				{ type: 'separator' },
+				// Troubleshooting the console's Go / Back buttons
+				{ label: 'Console Buttons...', click: handle_console_buttons },
+				{
+					label: 'Log All Console Messages',
+					type: 'checkbox',
+					checked: getLogAllConsoleMessages(),
+					click: (menuItem) => setLogAllConsoleMessages(menuItem.checked)
+				},
+				{ label: 'Show Debug Log', click: handle_show_debug_log },
 				...(isMac ? [] : [
 					{ type: 'separator' },
 					{ role: 'about' },

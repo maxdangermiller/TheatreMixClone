@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 import { is_ip_valid } from '../utils/ip_tools';
 
 import { TEXT_COLOR, SELECTED_COLOR } from './utils/colors.jsx';
+import MuteGroupButtons from './MuteGroupButtons.jsx';
+
+// How long a button press lights up in the mute group grid
+const FLASH_MS = 700;
 
 // Laid out like TheatreMix's Console Setup: device list on top, discovery
 // buttons under it, Disconnect / Apply bottom-left, Cancel / OK bottom-right.
@@ -41,7 +45,7 @@ const BODY_STYLE = {
 
 const LIST_STYLE = {
     flex: 1,
-    minHeight: 0,
+    minHeight: 110,
     overflowY: "auto",
     backgroundColor: "rgb(30, 30, 30)",
     border: "1px solid rgb(30, 30, 30)",
@@ -110,6 +114,42 @@ const Settings = () => {
     const [searching, setSearching] = useState(false);
     const [consoleStatus, setConsoleStatus] = useState({state: 'disconnected'});
 
+    // StudioLive mute group buttons: what's saved, and the edits not applied yet
+    const [buttonSetup, setButtonSetup] = useState(null);
+    const [pendingButtons, setPendingButtons] = useState({});
+    const [buttonsDirty, setButtonsDirty] = useState(false);
+    const [flashes, setFlashes] = useState({});
+    const buttonsDirtyRef = useRef(false);
+    buttonsDirtyRef.current = buttonsDirty;
+
+    /**
+     * Re-read the button setup (keeps unapplied edits)
+     */
+    const loadButtonSetup = async () => {
+        const setup = await window.consoleSetupApi.get();
+        setButtonSetup(setup);
+        if (!buttonsDirtyRef.current) setPendingButtons(setup.map);
+    }
+
+    const editButtons = (next) => {
+        setPendingButtons(next);
+        setButtonsDirty(true);
+    }
+
+    /**
+     * Save the mute group button edits into the show
+     */
+    const apply = async () => {
+        if (!buttonsDirty) return;
+
+        const setup = await window.consoleSetupApi.setButtonMap(pendingButtons);
+        setButtonSetup(setup);
+        setPendingButtons(setup.map);
+        setButtonsDirty(false);
+        setStatus("Buttons saved to the show. Save the show (⌘S) to keep them.");
+    }
+
+    // Cancel discards unapplied edits
     const close = () => {
         window.close();
     }
@@ -120,13 +160,22 @@ const Settings = () => {
     }
 
     /**
-     * Connect to a console
+     * OK: apply button edits, then connect to the selected console (if it isn't
+     * already the connected one) and close
      * @param {Number} row device row (defaults to the selected one)
      */
     const ok = async (row = selRow) => {
-        if (row == -1 || connecting) { return; }
+        if (connecting) { return; }
 
-        let board = devices[row];
+        await apply();
+
+        const board = devices[row];
+        const alreadyConnected = board && consoleStatus.state !== 'disconnected' && consoleStatus.host === board.ip;
+
+        if (!board || alreadyConnected) {
+            window.close();
+            return;
+        }
 
 		if (!is_ip_valid(board.ip)) {
 			setStatus(`Invalid IP address '${board.ip}'`);
@@ -197,14 +246,32 @@ const Settings = () => {
             ]);
         });
 
-        const unsubscribeStatus = window.presonus.onStatus(setConsoleStatus);
+        // Connecting / disconnecting changes what we know about the mute groups
+        const unsubscribeStatus = window.presonus.onStatus((status) => {
+            setConsoleStatus(status);
+            loadButtonSetup();
+        });
         window.presonus.getStatus().then(setConsoleStatus);
 
+        // Mute group names / channels changed on the console, or the show's map changed
+        const unsubscribeChanged = window.consoleSetupApi.onChanged(loadButtonSetup);
+
+        // Light up a button when it's pressed on the console
+        const unsubscribeActivity = window.consoleSetupApi.onButtonActivity(({group, on, fired}) => {
+            if (!on) return;
+            const at = Date.now();
+            setFlashes((prev) => ({...prev, [group]: {fired, at}}));
+            setTimeout(() => setFlashes((prev) => prev[group]?.at === at ? (({[group]: _, ...rest}) => rest)(prev) : prev), FLASH_MS);
+        });
+
+        loadButtonSetup();
         start_discovery();
 
         return () => {
             window.presonus.removeDeviceFoundListener();
             unsubscribeStatus();
+            unsubscribeChanged();
+            unsubscribeActivity();
         };
     }, [])
 
@@ -212,12 +279,13 @@ const Settings = () => {
     useEffect(() => {
         const handleKey = (event) => {
             if (event.key === 'Escape') close();
-            if (event.key === 'Enter') ok();
+            // (not while picking from a dropdown with the keyboard)
+            if (event.key === 'Enter' && event.target.tagName !== 'SELECT') ok();
         };
 
         window.addEventListener('keydown', handleKey);
         return () => window.removeEventListener('keydown', handleKey);
-    }, [selRow, devices, connecting]);
+    }, [selRow, devices, connecting, buttonsDirty, pendingButtons, consoleStatus]);
 
     const isConnected = consoleStatus.state !== 'disconnected';
 
@@ -278,17 +346,23 @@ const Settings = () => {
                     <button className="dialog-button" disabled>Manual...</button>
                     <button className="dialog-button" disabled>Advanced...</button>
                 </div>
+
+                <MuteGroupButtons
+                    setup={buttonSetup}
+                    pending={pendingButtons}
+                    onChange={editButtons}
+                    flashes={flashes}
+                />
             </div>
 
             <div style={FOOTER_STYLE}>
                 <span style={BUTTON_GROUP_STYLE}>
                     <button className="dialog-button" onClick={disconnect} disabled={!isConnected}>Disconnect</button>
-                    {/* Not built yet */}
-                    <button className="dialog-button" disabled>Apply</button>
+                    <button className="dialog-button" onClick={apply} disabled={!buttonsDirty}>Apply</button>
                 </span>
                 <span style={BUTTON_GROUP_STYLE}>
                     <button className="dialog-button" onClick={close}>Cancel</button>
-                    <button className="dialog-button primary" onClick={() => ok()} disabled={selRow == -1 || connecting}>
+                    <button className="dialog-button primary" onClick={() => ok()} disabled={connecting}>
                         {connecting ? "Connecting..." : "OK"}
                     </button>
                 </span>

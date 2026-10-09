@@ -579,9 +579,71 @@ def json_body(obj: Any) -> bytes:
     return struct.pack("<I", len(s)) + s
 
 
-def build_discovery_packet(model: str, serial: str, name: str, guid: bytes, port: int = CONTROL_PORT) -> bytes:
+def json_body_spaced(obj: Any) -> bytes:
+    """JSON the way the console formats it: '{"id": "SubscriptionReply"}' (space after the colon)."""
+    s = json.dumps(obj, separators=(",", ": ")).encode()
+    return struct.pack("<I", len(s)) + s
+
+
+def build_device_list(clients: list) -> bytes:
+    """PL permissions/device_list: value 0.5, then one 'description: type%internalName' line per client."""
+    lines = "\n".join(f"{c.get('clientDescription', 'User')}: {c.get('clientType', '')}%{c.get('clientInternalName', '')}"
+                      for c in clients)
+    return b"permissions/device_list\0" + b"\0\0" + struct.pack("<f", 0.5) + lines.encode() + b"\0"
+
+
+HANDSHAKE_FILE = Path(__file__).with_name("handshake.json")
+
+PROBE_CACHE_FILE = Path(__file__).with_name(".probe_targets.json")
+PROBE_CACHE_MAX_AGE = 24 * 3600
+
+
+def load_probe_targets() -> set:
+    """Discovery probe sockets seen by an earlier run (only local ones, less than a day old)."""
+    try:
+        data = json.loads(PROBE_CACHE_FILE.read_text())
+        if time.time() - data.get("saved", 0) > PROBE_CACHE_MAX_AGE:
+            return set()
+        targets = {(ip, int(port)) for ip, port in data.get("targets", [])}
+        if targets:
+            log.info("re-announcing to %d discovery client(s) remembered from the last run", len(targets))
+        return targets
+    except (OSError, ValueError):
+        return set()
+
+
+def save_probe_targets(targets: set) -> None:
+    try:
+        PROBE_CACHE_FILE.write_text(json.dumps({"saved": time.time(), "targets": sorted(targets)}))
+    except OSError:
+        pass
+
+
+def load_handshake(path: Optional[str]) -> Optional[dict]:
+    """Messages a real console sends around the state on Subscribe (see handshake.json)."""
+    p = Path(path) if path else HANDSHAKE_FILE
+    try:
+        data = json.loads(p.read_text())
+        log.info("handshake: replaying %d messages from %s", len(data["before_state"]) + len(data["after_state"]), p.name)
+        return data
+    except (OSError, ValueError, KeyError) as e:
+        log.warning("handshake: could not load %s (%s); Universal Control won't accept the connection", p, e)
+        return None
+
+
+# Device model code in the 'DA' announce (byte 13). Universal Control uses it to identify the
+# console, so it must match the model name.  0x25 is from a real StudioLive 32 capture
+# (scans/UC-capture.pcapng); 0x04 is the StudioLive 24R from the public protocol notes.
+DEVICE_TYPES = {"StudioLive 32": 0x25, "StudioLive 24R": 0x04}
+DEFAULT_DEVICE_TYPE = 0x04
+
+
+def build_discovery_packet(model: str, serial: str, name: str, guid: bytes, port: int = CONTROL_PORT,
+                           device_type: Optional[int] = None) -> bytes:
     """'DA' announce. Not standard framing: bytes 4-5 are the console's source port."""
-    return (HEADER + struct.pack("<H", port) + b"DA" + b"\x65\x00\x00\x00" + b"\x00\x04\x00\x80" + guid
+    if device_type is None:
+        device_type = DEVICE_TYPES.get(model, DEFAULT_DEVICE_TYPE)
+    return (HEADER + struct.pack("<H", port) + b"DA" + b"\x65\x00\x00\x00" + bytes([0, device_type, 0, 0x80]) + guid
             + model.encode() + b"\0" + b"AUD\0" + serial.encode() + b"\0" + name.encode() + b"\0")
 
 
@@ -601,31 +663,46 @@ def build_fd(req_id: bytes, offset: int, total: int, chunk: bytes) -> bytes:
 def build_ck(offset: int, total: int, chunk: bytes) -> bytes:
     """Layout from the client's handleCKPacket(): 4 skipped bytes | offset u32 | total u32 | size u32 | data.
     The data of all chunks together is the raw zlib stream (no 4-byte size prefix)."""
-    return struct.pack("<2sHIII", b"ZB", 0, offset, total, len(chunk)) + chunk
+    # A real console sends "\0\0ZB" first (scans/UC-capture5.pcapng); the client library skips these 4 bytes
+    return struct.pack("<H2sIII", 0, b"ZB", offset, total, len(chunk)) + chunk
 
 
 # (group number, value count). The frame layout is verified against the client's parseDataFrame; what each group
 # number *means* is NOT known. Numbering/counts mirror the fader-position groups (0 line, 1 return, 2 fxreturn, 3 talkback,
 # 4 aux, 5 fx, 6 sub, 7 main, 8 mono); the rest are filler so a consumer indexing any group 0-15 finds something.
-METER_GROUPS = [(0, 32), (1, 3), (2, 4), (3, 1), (4, 16), (5, 4), (6, 4), (7, 1), (8, 1)] + [(g, 2) for g in range(9, 16)]
+# Meter groups a real StudioLive 32 sends in every 'levl' frame, in order (scans/UC-capture5.pcapng).
+# Group id bytes are [channel type][metering stage].  Values are u16, 0 when silent.
+REAL_METER_LAYOUT = [(256, 6), (4, 20), (5, 20), (6, 20), (258, 6), (259, 6), (260, 6), (261, 6),
+                     (1024, 1), (1026, 16), (1027, 16), (1028, 16), (1029, 16),
+                     (1280, 2), (1282, 2), (1283, 2), (1285, 2),
+                     (1792, 2), (1794, 2), (1795, 2), (1796, 2), (1797, 2)]
 
 
-def build_meter_body(t: float) -> bytes:
+# Line channels in meter group 0, and the dB <-> meter value scale (linear, 65535 = 0 dBFS,
+# checked against Universal Control's meters)
+INPUT_METER_COUNT = 32
+
+
+def db_to_meter(db: float) -> int:
+    return 0 if db <= -96 else int(round(65535 * 10 ** (db / 20)))
+
+
+def build_meter_frame(layout: list, values: dict, cbytes: bytes, port: int = CONTROL_PORT) -> bytes:
     """
-    'levl' meter frame, as parsed by the client:
-      "levl" | 2 unknown | u16 valueCount | valueCount x u16 LE | u8 groupCount |
+    'levl' meter packet exactly as a real console sends it:
+      "UC\0\x01" | u16 LE console port (not a length!) | "MS" | 4 C-bytes (the client's pair, swapped) |
+      "levl" | 2 zero bytes | u16 valueCount | valueCount x u16 LE | u8 groupCount |
       groupCount x (int16 BE group, int16 LE offset, int16 LE count)
-    The client requires: total packet length == 21 + valueCount*2 + groupCount*6.
+    values: {(group, index): u16}; anything not set is 0 (silence).
     """
-    values: list[int] = []
+    vals: list[int] = []
     desc = b""
-    for group, n in METER_GROUPS:
-        desc += struct.pack(">h", group) + struct.pack("<hh", len(values), n)
-        for i in range(n):
-            level = 0.45 + 0.4 * math.sin(t * (0.7 + i * 0.13) + i) + random.uniform(-0.05, 0.05)
-            values.append(int(max(0.0, min(1.0, level)) * 65535))
-    return (b"levl" + struct.pack("<HH", 0, len(values)) + struct.pack(f"<{len(values)}H", *values)
-            + bytes([len(METER_GROUPS)]) + desc)
+    for group, n in layout:
+        desc += struct.pack(">h", group) + struct.pack("<hh", len(vals), n)
+        vals.extend(int(max(0, min(65535, values.get((group, i), 0)))) for i in range(n))
+    body = (b"levl" + struct.pack("<HH", 0, len(vals)) + struct.pack(f"<{len(vals)}H", *vals)
+            + bytes([len(layout)]) + desc)
+    return HEADER + struct.pack("<H", port) + b"MS" + cbytes + body
 
 
 # --------------------------------------------------------------------------- packet capture
@@ -655,6 +732,10 @@ class Session:
         self.peer = writer.get_extra_info("peername")
         self.parser = PacketParser()
         self.lock = asyncio.Lock()
+        # C-bytes for messages the console sends this client unprompted (changes, device list).
+        # A real console uses the client's own pair swapped, e.g. 65 00 6a 00 for Universal Control
+        # (which sends 6a 00 65 00); clients ignore pushes with the wrong pair. Set on Subscribe.
+        self.push_cb = DEFAULT_CBYTES
         self.meter_port: Optional[int] = None
         self.subscribed = False
         self.client: dict = {}
@@ -747,9 +828,22 @@ class Session:
         if msg.get("id") == "Subscribe":
             self.client = msg
             self.subscribed = True
+            self.push_cb = cb
             log.info("%s Subscribe %s", self, {k: v for k, v in msg.items() if k != "id"})
-            await self.send(b"JM", json_body(SUBSCRIPTION_REPLY), cb)
+            handshake = self.sim.handshake
+            if handshake is None:
+                # Old behaviour (--no-handshake): enough for the client library, not for Universal Control
+                await self.send(b"JM", json_body(SUBSCRIPTION_REPLY), cb)
+                await self.send_state(cb)
+                return
+            # Same order as a real console: permissions, state, user list, login, then the reply
+            for m in handshake["before_state"]:
+                await self.send(m["code"].encode(), bytes.fromhex(m["body"]), cb)
             await self.send_state(cb)
+            for m in handshake["after_state"]:
+                await self.send(m["code"].encode(), bytes.fromhex(m["body"]), cb)
+            await self.send(b"JM", json_body_spaced(SUBSCRIPTION_REPLY), cb)
+            await self.sim.send_device_list()
         elif msg.get("id") == "Unsubscribe":
             log.info("%s Unsubscribe", self)
             self.subscribed = False
@@ -760,7 +854,8 @@ class Session:
         payload = {"id": STATE_PAYLOAD_ID, **to_wire(self.sim.state.root)}
         comp = zlib.compress(ub_encode(payload))
         body = struct.pack("<I", len(comp)) + comp
-        if not self.sim.args.force_chunks and len(body) + 6 <= MAX_PACKET_PAYLOAD:
+        # A real console always sends the state as CK chunks; --single-zb sends one ZB instead
+        if self.sim.args.single_zb and len(body) + 6 <= MAX_PACKET_PAYLOAD:
             await self.send(b"ZB", body, cb)
             return
         step = self.sim.args.chunk_size
@@ -770,6 +865,11 @@ class Session:
     async def on_file_request(self, p: Packet, cb: bytes) -> None:
         req_id = p.body[:2].ljust(2, b"\0")
         path = p.body[2:].split(b"\0")[0].decode("utf-8", "replace")
+        if path == "Ftbr":
+            # Keep-alive probe: a real console answers id + 8 zero bytes + 02 00 00 00 (UC-capture5.pcapng).
+            # Clients drop the connection after a few seconds without it.
+            await self.send(b"FD", req_id + b"\0" * 8 + b"\x02\0\0\0", cb)
+            return
         data = self.sim.read_file(path)
         if len(data) > 0xFFFF:
             log.warning("%s FR %r: %d bytes exceeds the 64 KB the FD header can describe; truncating", self, path, len(data))
@@ -807,9 +907,15 @@ class _DQListener(asyncio.DatagramProtocol):
         if ptype == b"DA":
             return  # our own broadcast looping back, or another console
         if ptype in (b"DQ", b"NO"):
-            # "NO" observed from a current Universal Control (hex 5543000100004e4f00000000); assumed to be a
-            # discovery probe like "DQ". Answer by broadcast, to its listening port, and back to its source port.
-            log.info("discovery probe %r from %s:%d -> answering", ptype, *addr)
+            # "NO" is sent by Universal Control 5 at startup (hex 5543000100004e4f00000000), from a socket it
+            # binds per network adapter. It only lists consoles whose "DA" arrives on that socket (verified
+            # against UC 5.1.1), so answer back to its source port and keep announcing there.
+            first = (addr[0], addr[1]) not in self.sim.probe_targets
+            self.sim.probe_targets.add((addr[0], addr[1]))
+            if first:
+                save_probe_targets(self.sim.probe_targets)
+            log.info("discovery probe %r from %s:%d -> answering%s", ptype, *addr,
+                     " (will keep announcing to it)" if first else "")
             self.sim.announce(extra_targets=[(addr[0], self.sim.args.discovery_port), (addr[0], addr[1])])
         else:
             # Diagnostic: if a client is on the network this shows what it actually sends.
@@ -820,6 +926,18 @@ class _DQListener(asyncio.DatagramProtocol):
 class Simulator:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        # Meter levels sent in every 'levl' frame: {(group, index): u16}; set with the `meter` command
+        self.meter_values: dict = {}
+        # Extra meter groups appended to the real layout: [(group, count)]. Group 0 ("input signal",
+        # one value per line channel) drives Universal Control's channel meters and the app's channel
+        # monitoring; the capture didn't contain it (its inputs were idle), so --no-input-meters leaves it out.
+        self.meter_extra_groups: list = [] if args.no_input_meters else [(0, INPUT_METER_COUNT)]
+        # (ip, port) of clients that probed for consoles; announces are sent to them too. Remembered in
+        # PROBE_CACHE_FILE so a restarted simulator reappears in an already-open Universal Control (it
+        # only probes when it starts, and loopback can't carry the broadcast a real console relies on).
+        self.probe_targets: set = load_probe_targets()
+        # Real console's subscribe handshake (handshake.json), or None for the old minimal one
+        self.handshake = None if args.no_handshake else load_handshake(args.handshake_file)
         self.sessions: set[Session] = set()
         self.plog = PacketLog(args.log_file)
         if args.state_file:
@@ -833,7 +951,8 @@ class Simulator:
         args.model = args.model or self.state.get("global/mixer_name") or "StudioLive 32"
         args.serial = args.serial or self.state.get("global/mixer_serial") or "SL3E21000001"
         args.name = args.name or self.state.get("global/devicename") or args.model
-        self.guid = uuid.uuid5(uuid.NAMESPACE_DNS, args.serial).bytes
+        # 16-byte device ID in the announce: --guid (e.g. a real console's) or derived from the serial
+        self.guid = bytes.fromhex(args.guid.replace("-", "")) if args.guid else uuid.uuid5(uuid.NAMESPACE_DNS, args.serial).bytes
         self.tx: Optional[asyncio.DatagramTransport] = None
         self._announced: set = set()
         self.dca_tags: dict[int, str] = {}
@@ -860,7 +979,7 @@ class Simulator:
         for s in list(self.sessions):
             if s is not exclude and s.subscribed:
                 # a real console's echo of a client's PS mirrors the client's C-bytes (seen in a real capture)
-                cb = sender_cb if (s is sender and sender_cb) else DEFAULT_CBYTES
+                cb = sender_cb if (s is sender and sender_cb) else s.push_cb
                 asyncio.ensure_future(s.send(ptype, body, cb))
 
     def use_color(self, stream: Any) -> bool:
@@ -895,6 +1014,46 @@ class Simulator:
         self.note_dca(key, "console", before)
         self.broadcast(b"PV", build_pv(key, value))
 
+    def signal_command(self, args: list) -> str:
+        """signal <ch|all> <dB|off>: set a line channel's input meter (group 0), e.g. signal 3 -20"""
+        if len(args) != 2:
+            return "usage: signal <channel|all> <dB|off>   e.g.  signal 3 -20   signal all off"
+        level = 0 if args[1] == "off" else db_to_meter(float(args[1]))
+        chans = range(1, INPUT_METER_COUNT + 1) if args[0] == "all" else [int(args[0])]
+        for ch in chans:
+            self.meter_values[(0, ch - 1)] = level
+        if not self.args.meter_hz:
+            return "note: meters are off; start with --meter-hz 20"
+        return f"input signal ch {args[0]} = {args[1]}{'' if args[1] == 'off' else ' dBFS'} (meter value {level})"
+
+    def meter_command(self, args: list) -> str:
+        """meter <group> <index|all> <value> | meter clear | meter addgroup <group> <count> | meter show"""
+        if not args or args[0] == "show":
+            return f"meter values: {dict(sorted(self.meter_values.items()))}  extra groups: {self.meter_extra_groups}"
+        if args[0] == "clear":
+            self.meter_values.clear()
+            return "meter values cleared (all silent)"
+        if args[0] == "addgroup" and len(args) == 3:
+            self.meter_extra_groups.append((int(args[1], 0), int(args[2])))
+            return f"extra meter groups: {self.meter_extra_groups}"
+        if len(args) == 3:
+            group, which, value = int(args[0], 0), args[1], int(args[2], 0)
+            count = dict(REAL_METER_LAYOUT + self.meter_extra_groups).get(group)
+            if count is None:
+                return f"no meter group {group}"
+            for i in (range(count) if which == "all" else [int(which)]):
+                self.meter_values[(group, i)] = value
+            return f"meter group {group} [{which}] = {value}"
+        return "usage: meter <group> <index|all> <value 0-65535> | meter clear | meter addgroup <group> <count> | meter show"
+
+    async def send_device_list(self) -> None:
+        """Tell every subscribed client who's connected (a real console does this when clients join / leave)."""
+        clients = [c for c in self.sessions if c.subscribed and c.client]
+        body = build_device_list([c.client for c in clients])
+        for c in clients:
+            await c.send(b"PV", b"permissions/device_list\0\0\0" + struct.pack("<f", 0.5), c.push_cb)
+            await c.send(b"PL", body, c.push_cb)
+
     def push_ps(self, key: str, value: str) -> None:
         self.state.set(key, value)
         self.broadcast(b"PS", build_ps(key, value))
@@ -902,9 +1061,12 @@ class Simulator:
     def announce(self, extra_targets: Optional[list] = None) -> None:
         if not self.tx:
             return
-        pkt = build_discovery_packet(self.args.model, self.args.serial, self.args.name, self.guid, self.args.port)
+        pkt = build_discovery_packet(self.args.model, self.args.serial, self.args.name, self.guid, self.args.port,
+                                     self.args.device_type)
         port = self.args.discovery_port
         targets = [(self.broadcast_addr, port)] + [(ip, port) for ip in self.args.announce_to]
+        # Clients that sent a discovery probe ("NO" / "DQ") get every announce on their probe socket
+        targets += [t for t in sorted(self.probe_targets) if t not in targets]
         for t in extra_targets or []:
             if t not in targets:
                 targets.append(t)
@@ -969,6 +1131,9 @@ class Simulator:
             await s.run()
         finally:
             self.sessions.discard(s)
+            # Tell the remaining clients who's still connected
+            if self.handshake is not None and s.subscribed:
+                asyncio.ensure_future(self.send_device_list())
 
     async def _announce_loop(self) -> None:
         while True:
@@ -976,21 +1141,27 @@ class Simulator:
             await asyncio.sleep(self.args.announce_interval)
 
     async def _meter_loop(self) -> None:
-        t0 = time.monotonic()
         period = 1.0 / self.args.meter_hz
         while True:
             await asyncio.sleep(period)
-            targets = [(s.peer[0], s.meter_port) for s in self.sessions if s.meter_port]
-            if not targets or not self.tx:
+            if not self.tx:
                 continue
-            pkt = encode(b"MS", build_meter_body(time.monotonic() - t0))
-            for tgt in targets:
-                self.tx.sendto(pkt, tgt)
+            layout = REAL_METER_LAYOUT + self.meter_extra_groups
+            for s in list(self.sessions):
+                if s.meter_port:
+                    # A client on this machine (e.g. Universal Control) binds its meter socket per adapter
+                    # (127.0.0.1, Wi-Fi...), not to the console address aliased onto loopback, so send
+                    # local clients their meters on 127.0.0.1. A real console just uses the peer address.
+                    ip = "127.0.0.1" if s.peer[0] in (self.args.bind_ip, "127.0.0.1") else s.peer[0]
+                    self.tx.sendto(build_meter_frame(layout, self.meter_values, s.push_cb, self.args.port),
+                                   (ip, s.meter_port))
 
 
 # --------------------------------------------------------------------------- interactive prompt
 HELP = """commands:
   set <key> <float>     push a parameter change, e.g.  set line/ch1/mute 1
+  signal <ch|all> <dB|off>  input level on a line channel (needs --meter-hz), e.g.  signal 3 -20 ;  signal all off
+  meter <g> <i|all> <v> raw meter value in any group, e.g.  meter 4 0 30000 ;  meter clear
   name <key> <text>     push a string change,           e.g.  name line/ch1/username Kick
   get <key>             read a value from the state tree
   dca [n|all]           DCA table: first 8 DCAs with level and channels (n = just DCA n; all = every DCA)
@@ -1017,6 +1188,10 @@ async def repl(sim: Simulator) -> None:
         try:
             if cmd == "set" and len(parts) == 3:
                 sim.push_pv(parts[1], float(parts[2]))
+            elif cmd == "signal":
+                print(sim.signal_command(line.strip().split()[1:]))
+            elif cmd == "meter":
+                print(sim.meter_command(line.strip().split()[1:]))
             elif cmd == "name" and len(parts) == 3:
                 sim.push_ps(parts[1], parts[2])
             elif cmd == "get" and len(parts) >= 2:
@@ -1074,6 +1249,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap.add_argument("--model", help="default: from --state-file, else 'StudioLive 32'")
     ap.add_argument("--name", help="friendly name shown in discovery (default: from --state-file)")
     ap.add_argument("--serial", help="default: from --state-file, else a made-up serial")
+    ap.add_argument("--device-type", type=lambda v: int(v, 0),
+                    help="model code in the discovery announce, e.g. 0x25 (default: from --model, see DEVICE_TYPES)")
+    ap.add_argument("--guid", help="16-byte device ID in the announce, as hex (default: derived from the serial)")
     ap.add_argument("--bind-ip", default="0.0.0.0", help="interface for TCP + UDP (also selects the broadcast interface)")
     ap.add_argument("--port", type=int, default=CONTROL_PORT)
     ap.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT)
@@ -1085,15 +1263,21 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap.add_argument("--no-discovery", action="store_true")
     ap.add_argument("--no-dq-listener", action="store_true",
                     help="announce only; don't bind UDP 47809 (use when a client runs on this same machine)")
+    ap.add_argument("--no-input-meters", action="store_true",
+                    help="leave meter group 0 (line input levels) out, exactly like the capture")
     ap.add_argument("--meter-hz", type=float, default=0.0,
-                    help="UDP meter frames per second (default 0 = off; the frame format is still a guess "
-                         "and real clients reject it)")
+                    help="UDP meter frames per second (default 0 = off; a real console sends ~20). "
+                         "Same format as a real console, so Universal Control shows them")
     ap.add_argument("--latency-ms", type=float, default=0.0, help="delay every outgoing TCP packet")
     ap.add_argument("--no-color", action="store_true", help="plain DCA table (also automatic when not a terminal or NO_COLOR is set)")
     ap.add_argument("--ka-reply", action="store_true",
                     help="answer KA packets with a KA (a real console doesn't; the client logs 'Unhandled message code')")
-    ap.add_argument("--force-chunks", action="store_true", help="send the state as CK chunks even when it fits one ZB")
-    ap.add_argument("--chunk-size", type=int, default=32768, help="bytes of zlib data per CK packet")
+    ap.add_argument("--single-zb", action="store_true",
+                    help="send the state as one ZB packet (a real console sends CK chunks)")
+    ap.add_argument("--chunk-size", type=int, default=16256, help="bytes of zlib data per CK packet (real console: 16256)")
+    ap.add_argument("--handshake-file", help="console handshake to replay on Subscribe (default: handshake.json next to this file)")
+    ap.add_argument("--no-handshake", action="store_true",
+                    help="old minimal handshake (SubscriptionReply + state only); Universal Control rejects it")
     ap.add_argument("--no-echo-sender", action="store_true", help="don't echo PV/PS back to the client that sent it")
     ap.add_argument("--state-file", help="replay a state tree from a real console (UBJSON / zlib / ZB body)")
     ap.add_argument("--files-dir", help="directory served for FR file requests (e.g. presets/channel)")

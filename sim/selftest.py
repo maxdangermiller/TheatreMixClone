@@ -41,7 +41,8 @@ async def main() -> None:
     print("ok  discovery packet == documented sample")
 
     # 2. run the simulator
-    args = sl.parse_args(["--port", "53100", "--no-discovery", "--meter-hz", "50", "--no-repl"])
+    args = sl.parse_args(["--port", "53100", "--no-discovery", "--meter-hz", "50", "--no-repl",
+                          "--single-zb", "--no-handshake"])  # the minimal protocol this test checks
     sim = sl.Simulator(args)
     await sim.start()
     try:

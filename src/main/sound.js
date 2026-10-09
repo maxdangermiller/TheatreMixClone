@@ -5,22 +5,17 @@ import { EventEmitter } from 'node:events';
 
 import { Client } from '@featherbear/presonus-studiolive-api';
 import {getShow} from './showManager.js';
+import {attachConsoleButtons, detachConsoleButtons, syncConsoleButtons} from './consoleButtons.js';
+import {debugLog} from './debugLog.js';
+import {attachChannelMonitor, detachChannelMonitor, resetChannelMonitor, setMonitoredChannels, setActiveChannels} from './channelMonitor.js';
 import {DEFAULT_DCA_LEVEL, MIN_DCA_LEVEL, get_dca_level} from '../utils/dca_levels.js';
 
 import {convert_ip_to_octets, is_ip_valid} from '../utils/ip_tools';
 import Actor from '../models/Actor.js';
 import Profile from '../models/Profile.js';
 
-const INACTIVE_LEVEL = 20;
-const INACTIVE_MIN_TIME = 100;
-const CLIPPING_LEVEL = 9;
-const INACTIVE_COLOR = "#121f75";
+// Colour for DCAs in use (line channel colours come from channelMonitor.js)
 const ACTIVE_COLOR = "#ffffff";
-const CLIPPING_COLOR = "#850707";
-const LIVE_COLOR = "#b08e07";
-
-
-let low_volume_channels = {};
 
 // Global Presonus Client Object
 /** @type {Client} */
@@ -33,6 +28,11 @@ const CONTROLLED_LINES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 const CONTROL_PORT = 53000;
 const DISCOVERY_PORT = 47809;
 const DEFAULT_DISCOVERY_TIMEOUT = 10000;
+
+// The query Universal Control broadcasts to find consoles ("NO"); consoles answer with
+// their "DA" announcement straight back to the sender
+const DISCOVERY_PROBE = Buffer.from('5543000100004e4f00000000', 'hex');
+const DISCOVERY_PROBE_INTERVAL = 3000;
 
 // How long a single TCP attempt may take, and how long we keep retrying before giving up
 const CONNECT_ATTEMPT_TIMEOUT = 5000;
@@ -82,6 +82,9 @@ let pending_discovery = null;
  */
 let applied_dcas = {};
 
+/** What was fired last, so it can be re-applied if the console comes back changed */
+let last_fired = null; // {type: 'cue', cue} | {type: 'linecheck'}
+
 /**
  * Line usernames last written to the console, so unchanged names aren't resent
  * @type {Object<number, String>}
@@ -128,32 +131,33 @@ const discover = async (event, {timeout}) => {
 
 	pending_discovery = new Promise((resolve) => {
 		const devices = new Map();
-		const socket = dgram.createSocket({type: 'udp4', reuseAddr: true});
+		const sockets = [];
 		let finished = false;
 		let timer = null;
+		let probe_timer = null;
+		let listener_error = null;
 
 		const finish = (error) => {
 			if (finished) return;
 			finished = true;
 			clearTimeout(timer);
-			try { socket.close(); } catch {}
+			clearInterval(probe_timer);
+			for (const s of sockets) {
+				try { s.close(); } catch {}
+			}
 			pending_discovery = null;
 
-			console.log(`[SOUND:discover]: Found ${devices.size} console(s)`, error ?? "");
-			resolve({devices: [...devices.values()], error});
+			// Only report the listener's error if nothing was found another way
+			const reported = devices.size === 0 ? (error ?? listener_error) : error;
+			debugLog('DISCOVERY', `Finished: ${devices.size} console(s) found`, reported ?? "");
+			resolve({devices: [...devices.values()], error: reported ?? undefined});
 		}
 
-		socket.on('error', (err) => {
-			console.warn("[SOUND:discover]: Discovery socket error", err);
-
-			if (err.code === 'EADDRINUSE') {
-				finish(`Discovery port ${DISCOVERY_PORT} is in use by another app (likely Universal Control). Quit it and rescan.`);
-			} else {
-				finish(`Discovery failed: ${err.code ?? err.message}`);
-			}
-		});
-
-		socket.on('message', (packet, rinfo) => {
+		/**
+		 * A "DA" announcement arrived (on the shared port, or as a reply to our probe)
+		 * @param {String} via which socket received it, for the log
+		 */
+		const handle_message = (packet, rinfo, via) => {
 			const parsed = parse_discovery_packet(packet);
 			if (parsed === null) return;
 
@@ -167,16 +171,64 @@ const discover = async (event, {timeout}) => {
 			devices.set(parsed.serial, device);
 
 			if (is_new) {
-				console.log("[SOUND:discover]: Found console", device);
+				debugLog('DISCOVERY', `Found "${device.name}" (${device.model}, serial ${device.serial}) at ${device.ip}, via ${via}`);
 				if (!event.sender.isDestroyed()) {
 					event.sender.send('presonus:device-found', device);
 				}
 			}
+		}
+
+		// 1) Shared discovery port: consoles broadcast an announcement here every few seconds.
+		//    Universal Control listens here too; broadcasts reach everyone, but a direct
+		//    (unicast) announcement only reaches one of the listening apps.
+		const listener = dgram.createSocket({type: 'udp4', reuseAddr: true});
+		sockets.push(listener);
+		listener.on('error', (err) => {
+			debugLog('DISCOVERY', `Can't listen on port ${DISCOVERY_PORT} (${err.code ?? err.message}); relying on probes`);
+			listener_error = err.code === 'EADDRINUSE'
+				? `Discovery port ${DISCOVERY_PORT} is in use by another app (likely Universal Control). Quit it and rescan.`
+				: `Discovery failed: ${err.code ?? err.message}`;
+			try { listener.close(); } catch {}
+		});
+		listener.on('message', (packet, rinfo) => handle_message(packet, rinfo, `port ${DISCOVERY_PORT}`));
+		listener.bind(DISCOVERY_PORT, '0.0.0.0', () => {
+			listener.setBroadcast(true);
+			debugLog('DISCOVERY', `Listening on port ${DISCOVERY_PORT}`);
 		});
 
-		socket.bind(DISCOVERY_PORT, '0.0.0.0', () => {
-			socket.setBroadcast(true);
-		});
+		// 2) Probe from every network adapter, like Universal Control: broadcast a "NO" query
+		//    and take the replies on that adapter's own socket.
+		const probes = [];
+		for (const [iface, addrs] of Object.entries(os.networkInterfaces())) {
+			for (const addr of addrs ?? []) {
+				if (addr.family !== 'IPv4' || addr.internal) continue;
+
+				const probe = dgram.createSocket({type: 'udp4'});
+				sockets.push(probe);
+				probe.on('error', (err) => debugLog('DISCOVERY', `Probe socket on ${iface} (${addr.address}) failed: ${err.code ?? err.message}`));
+				probe.on('message', (packet, rinfo) => handle_message(packet, rinfo, `probe on ${iface}`));
+				probe.bind(0, addr.address, () => {
+					probe.setBroadcast(true);
+					probes.push({probe, iface, address: addr.address});
+				});
+			}
+		}
+
+		const send_probes = () => {
+			for (const {probe, iface, address} of probes) {
+				probe.send(DISCOVERY_PROBE, DISCOVERY_PORT, '255.255.255.255', (err) => {
+					if (err) debugLog('DISCOVERY', `Probe from ${iface} (${address}) failed: ${err.code ?? err.message}`);
+				});
+			}
+		}
+
+		// Give the sockets a moment to bind, then probe every few seconds while scanning
+		setTimeout(() => {
+			if (finished) return;
+			debugLog('DISCOVERY', `Probing from ${probes.length} adapter(s): ${probes.map((p) => `${p.iface} ${p.address}`).join(", ") || "none"}`);
+			send_probes();
+			probe_timer = setInterval(send_probes, DISCOVERY_PROBE_INTERVAL);
+		}, 200);
 
 		timer = setTimeout(() => finish(), timeout);
 	});
@@ -241,15 +293,6 @@ const describe_socket_error = (err) => {
 	}
 }
 
-/**
- * Initialize Low Volume Array
- */
-const init_low_vol_arr = () => {
-	for (let i of CONTROLLED_LINES) {
-		low_volume_channels[i] = 0;
-	}
-}
-
 
 /**
  * Connect to Console
@@ -280,6 +323,8 @@ const disconnect = (message) => {
 	if (presonusClient === null) return;
 
 	console.log("[SOUND:disconnect]: Disconnecting from Sound Board.");
+	detachConsoleButtons();
+	detachChannelMonitor();
 	presonusClient.disconnect();
 	presonusClient = null;
 
@@ -308,6 +353,13 @@ const do_connect = async (host, port, name) => {
 	});
 	presonusClient = client;
 
+	// Console mute group buttons as Go / Back
+	attachConsoleButtons(client);
+
+	// Line channel colours from the meters (blue silent / white signal / yellow in cue)
+	setMonitoredChannels(getShow(), CONTROLLED_LINES);
+	attachChannelMonitor(client);
+
 	let last_error = null;
 
 	client.on('socketError', (err) => {
@@ -318,11 +370,37 @@ const do_connect = async (host, port, name) => {
 		console.warn(`[SOUND:connect]: ${describe_socket_error(err)}`);
 	});
 
+	let ever_connected = false;
+
 	client.on('connected', () => {
 		console.log("Connected to the device!");
 		set_console_status({state: 'connected', host, name});
 
+		// Fresh connection: the next cue rewrites every DCA. (Done here, before the
+		// channel names below are written, so their record isn't wiped afterwards.)
+		if (!ever_connected) reset_console_state();
+
 		init_channels();
+
+		// (Re)check the mute group buttons each time the connection comes up
+		syncConsoleButtons(getShow());
+
+		// Reconnected (network blip or console reboot): make sure the console still matches
+		if (ever_connected) {
+			resync_after_reconnect(client);
+
+			// The meter subscription belongs to the old connection: ask for meters again on
+			// the same port, and re-send the channel colours in case the console was reset
+			if (client.meteringClient) {
+				const port = client.meteringClient.address().port;
+				const portBytes = Buffer.alloc(2);
+				portBytes.writeUInt16LE(port);
+				client._sendPacket('UM', portBytes, 0);
+				debugLog('METERS', `Reconnected: asked for meters again on port ${port}`);
+			}
+			resetChannelMonitor();
+		}
+		ever_connected = true;
 	})
 
 	client.on('reconnecting', () => {
@@ -337,9 +415,7 @@ const do_connect = async (host, port, name) => {
 		set_console_status({state: 'connecting', host, name, message: "Connection lost, reconnecting"});
 	})
 
-	init_low_vol_arr();
 
-	client.on('meter', handleMeteringData);
 
 	let deadline_timer;
 	const deadline = new Promise((resolve) => {
@@ -361,9 +437,6 @@ const do_connect = async (host, port, name) => {
 		return {ok: false, error};
 	}
 
-	// Fresh connection: the next cue rewrites every DCA
-	reset_console_state();
-
 	console.log("[SOUND:connect]: Connected to Sound Board.")
 	console.log(`[SOUND:connect]: Version ${client.state.get('global.mixer_version')}`);
 
@@ -379,53 +452,7 @@ const do_connect = async (host, port, name) => {
 }
 
 
-// #region Metering Type Definitions
-/**
- * @typedef ChannelStrip
- * @property {number[]} stripA
- * @property {number[]} stripB
- * @property {number[]} stripC
- * @property {number[]} stripD
- * @property {number[]} stripE
- */
 
-/**
- * @typedef AuxStrip
- * @property {number[]} stripA
- * @property {number[]} stripB
- * @property {number[]} stripC
- * @property {number[]} stripD
- */
-
-/**
- * @typedef MainChannelStrip
- * @property {number[]} stageA
- * @property {number[]} stageB
- * @property {number[]} stageC
- * @property {number[]} stageD
- */
-
-/**
- * @typedef FXReturnStrip
- * @property {number[]} input
- * @property {number[]} stripA
- * @property {number[]} stripB
- * @property {number[]} stripC
- */
-
-/**
- * @typedef MeterData
- * @property {number[]} input
- * @property {number[]} mainMixFaders
- * @property {number} main
- * @property {ChannelStrip} channelStrip
- * @property {AuxStrip} aux_chstrip
- * @property {MainChannelStrip} main_chstrip
- * @property {AuxStrip} fx_chstrip
- * @property {FXReturnStrip} fxreturn_strip
- */
-
-// #endregion
 
 /**
  * Set a channel's color on the console
@@ -484,36 +511,82 @@ const get_cue_channels = () => {
 	return arr;
 }
 
+
 /**
- * Handle Metering Data
- * @param {MeterData} metering 
- * @async
+ * Read a value from the state snapshot the console sent on (re)connect. Unlike
+ * client.state, this ignores values cached from before the connection dropped.
+ * @param {Object} snapshot client.dumpState().internal
+ * @param {String} path e.g. "filtergroup/ch1/line3"
  */
-const handleMeteringData = async (metering) => {
-	// Loop through all inputs and read volume
-	for (let i of CONTROLLED_LINES) {
-		let lvl = metering.input[i - 1];
+const snapshot_get = (snapshot, path) => {
+	let node = snapshot;
+	for (const key of path.split("/")) {
+		node = node?.children?.[key] ?? node?.[key];
+		if (node === undefined) return undefined;
+	}
+	return node;
+}
 
-		if (lvl <= INACTIVE_LEVEL) {	
-			if (low_volume_channels[i - 1] >= INACTIVE_MIN_TIME) {
-				set_color({type: "LINE", channel: i}, INACTIVE_COLOR);
-			} else {
-				low_volume_channels[i - 1]++;
+const is_on = (value) => value === true || (typeof value === 'number' && value >= 0.5);
+
+/**
+ * After a reconnect, compare what we last wrote with the console's fresh state. After a
+ * network blip nothing differs and nothing is touched (live fader moves are kept). If the
+ * console rebooted or was changed while we were away, forget those DCAs / line names and
+ * re-apply the current cue so the console matches straight away instead of at the next Go.
+ * @param {Client} client 
+ */
+const resync_after_reconnect = (client) => {
+	let snapshot;
+	try {
+		snapshot = client.dumpState().internal;
+	} catch (error) {
+		debugLog('RECONNECT', "Couldn't read the console's state after reconnecting; rewriting everything", error.message);
+		reset_console_state();
+		snapshot = null;
+	}
+
+	const changed = [];
+
+	if (snapshot) {
+		for (const [dca, applied] of Object.entries(applied_dcas)) {
+			if (!applied) continue;
+
+			const channels = CONTROLLED_LINES
+				.filter((n) => is_on(snapshot_get(snapshot, `filtergroup/ch${dca}/line${n}`)))
+				.join(",");
+			const name = snapshot_get(snapshot, `filtergroup/ch${dca}/name`) ?? "";
+
+			if (channels !== applied.channels || name !== applied.label) {
+				changed.push(`DCA ${dca} (console has "${name}" ch [${channels}], we sent "${applied.label}" ch [${applied.channels}])`);
+				delete applied_dcas[dca];
 			}
-			continue;
 		}
 
-		// Clear the low volume count
-		low_volume_channels[i - 1] = 0;
-
-		// If the channel is used in the current cue, set to live color
-		if (get_cue_channels().includes(i)) {
-			set_color({type: "LINE", channel: i}, LIVE_COLOR);
-			continue;
+		for (const [ch, name] of Object.entries(line_names)) {
+			const actual = snapshot_get(snapshot, `line/ch${ch}/username`) ?? "";
+			if (actual !== name) {
+				changed.push(`line ${ch} name ("${actual}" instead of "${name}")`);
+				// Record what the console really shows (not forget it: the client's cache can still
+				// hold the old name, which would make the resend look unnecessary)
+				line_names[ch] = actual;
+			}
 		}
+	}
 
-		// Otherwise set it to the active color
-		set_color({type: "LINE", channel: i}, ACTIVE_COLOR);
+	if (snapshot && changed.length === 0) {
+		debugLog('RECONNECT', "Reconnected; the console still matches, nothing to resend");
+		return;
+	}
+
+	debugLog('RECONNECT', `Reconnected; the console changed while we were away: ${changed.join("; ") || "unknown state"}`);
+
+	if (last_fired?.type === 'cue') {
+		debugLog('RECONNECT', `Re-applying the current cue ${last_fired.cue.number}.${last_fired.cue.point}`);
+		write_cue(null, {cue_object: last_fired.cue});
+	} else if (last_fired?.type === 'linecheck') {
+		debugLog('RECONNECT', "Re-applying Line Checks");
+		set_soundcheck_labels();
 	}
 }
 
@@ -623,6 +696,7 @@ const write_cue = async (_event, {cue_object}) => {
 	*/
 	
 	current_cue = cue_object;
+	last_fired = {type: 'cue', cue: cue_object};
 	
 	console.log("[SOUND:write_cue]: Writing Cue")
 
@@ -647,6 +721,9 @@ const write_cue = async (_event, {cue_object}) => {
 		}
 	}
 
+	// Channels in this cue's DCAs show yellow while they have signal
+	setActiveChannels(get_cue_channels());
+
 	// TODO: Write AUX assignments?
 	// filtergroup/ch1/mute_aux* - 0 or 1
 	// filtergroup/ch1/aux* - volume 0.0 - 1.0
@@ -659,6 +736,7 @@ const write_cue = async (_event, {cue_object}) => {
  * @param {Event} _event 
  */
 const fire_sound_check = async (_event) => {
+	last_fired = {type: 'linecheck'};
 	set_soundcheck_labels();
 }
 
@@ -717,7 +795,11 @@ const get_actor = (ch) => {
 const set_line_name = (ch, name) => {
 	const current = line_names[ch] ?? presonusClient.state.get(`line/ch${ch}/username`);
 
-	if (current === name) return;
+	if (current === name) {
+		// Already showing it: remember that, so a reconnect can check it's still true
+		line_names[ch] = name;
+		return;
+	}
 
 	presonusClient.setName({type: 'LINE', channel: ch}, name);
 	line_names[ch] = name;
@@ -760,4 +842,9 @@ const set_soundcheck_labels = async () => {
 	}
 }
 
-export {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status, consoleEvents};
+/**
+ * Monitor the open show's channels (call when the show changes)
+ */
+const sync_channel_monitor = () => setMonitoredChannels(getShow(), CONTROLLED_LINES);
+
+export {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, sync_channel_monitor, get_console_status, consoleEvents};

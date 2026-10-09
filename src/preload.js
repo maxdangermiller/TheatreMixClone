@@ -77,6 +77,20 @@ const subscribe = (channel, callback) => {
 	return () => ipcRenderer.removeListener(channel, listener);
 }
 
+contextBridge.exposeInMainWorld('consoleSetupApi', {
+	// {hasShow, connected, source, map: {group: action}, actions, groups}
+	get: () => ipcRenderer.invoke('console-setup:get'),
+
+	// groupToAction: {muteGroup: actionId}; saved in the show (mark unsaved)
+	setButtonMap: (groupToAction) => ipcRenderer.invoke('console-setup:set_button_map', groupToAction),
+
+	// {group, on, action, fired} whenever a mute group changes on the console
+	onButtonActivity: (callback) => subscribe('console-buttons-activity', callback),
+
+	// Mute group names / channels or the show's map changed
+	onChanged: (callback) => subscribe('console-buttons-changed', callback),
+});
+
 contextBridge.exposeInMainWorld('qlabApi', {
 	// Start a QLab cue now (Test QLab Recall); returns {ok, error?}
 	recall: (cueNumber) => ipcRenderer.invoke('qlab:recall', cueNumber),

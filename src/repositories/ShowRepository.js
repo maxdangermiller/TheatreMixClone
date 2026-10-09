@@ -45,6 +45,8 @@ class ShowRepository {
 
         show.dcaLevels = this.loadDcaLevels();
 
+        show.consoleSetup = this.loadConsoleSetup();
+
         return show;
     }
 
@@ -72,6 +74,51 @@ class ShowRepository {
         }
 
         return levels;
+    }
+
+    /**
+     * Load StudioLive console setup (only present in .tmixp files).
+     * Kept apart from TheatreMix's config so merging a .tmix doesn't overwrite it.
+     * @returns {Object<string, string>} e.g. { muteButtonMap: "0=6,1=5" }
+     */
+    loadConsoleSetup() {
+
+        const exists = this.db.get(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'consoleSetup'"
+        );
+
+        if (!exists) {
+            return {};
+        }
+
+        return Object.fromEntries(
+            this.db.all('SELECT param, value FROM consoleSetup').map((row) => [row.param, row.value ?? ""])
+        );
+    }
+
+    /**
+     * Replace the StudioLive console setup
+     * @param {Object<string, string>} setup 
+     */
+    saveConsoleSetup(setup) {
+
+        const save = this.db.transaction(() => {
+
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS consoleSetup (
+                    param   TEXT PRIMARY KEY,
+                    value   TEXT
+                )
+            `);
+
+            this.db.run('DELETE FROM consoleSetup');
+
+            for (const [param, value] of Object.entries(setup ?? {})) {
+                this.db.run('INSERT INTO consoleSetup (param, value) VALUES (?, ?)', [param, value]);
+            }
+        });
+
+        save();
     }
 
     /**

@@ -2,10 +2,11 @@ import { app, BrowserWindow, ipcMain, Menu, shell, powerSaveBlocker } from 'elec
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
-import {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status} from './main/sound.js';
-import {showEvents, loadShow, getShow, saveShow, setDcaLevel, undoDcaLevel, redoDcaLevel, isShowDirty, confirmDiscardChanges} from './main/showManager.js';
+import {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status, sync_channel_monitor} from './main/sound.js';
+import {showEvents, loadShow, getShow, saveShow, setDcaLevel, setConsoleSetup, undoDcaLevel, redoDcaLevel, isShowDirty, confirmDiscardChanges} from './main/showManager.js';
 import {qlabEvents, syncQLab, recallQLabCue, getQLabStatus, stopQLab} from './main/qlab.js';
 import {startOscServer, stopOscServer, notifyCueFired} from './main/oscServer.js';
+import {syncConsoleButtons, setButtonActionHandler, buttonEvents, effectiveButtonMap, serializeButtonMap, getButtonSetup} from './main/consoleButtons.js';
 
 import {handle_open_file} from './main/fileManager.js';
 import {initMenu, sendViewSettings, sendMenuAction, setLockEditing} from './main/menuManager.js';
@@ -51,6 +52,13 @@ ipcMain.handle('presonus:write_cue', async (event, args) => {
 ipcMain.handle('presonus:fire_sound_check', async (event, args) => {
 	notifyCueFired(null);
 	return fire_sound_check(event, args);
+});
+
+// Console Setup → StudioLive mute group buttons
+ipcMain.handle('console-setup:get', async () => getButtonSetup(getShow()));
+ipcMain.handle('console-setup:set_button_map', async (_, groupToAction) => {
+	setConsoleSetup('muteButtonMap', serializeButtonMap(groupToAction));
+	return getButtonSetup(getShow());
 });
 
 // Action → Test QLab Recall
@@ -159,7 +167,8 @@ const createWindow = () => {
 				action: 'allow',
 				overrideBrowserWindowOptions: {
 					width: 800,
-					height: 600,
+					// Tall enough for the console list and the mute group buttons
+					height: 760,
 					resizable: false,
 					minimizable: false,
 					maximizable: false,
@@ -239,8 +248,32 @@ app.on('before-quit', () => {
 app.whenReady().then(() => {
 	initMenu();
 
-	// QLab follows the open show's "Recall QLab cues" setting
-	showEvents.on('changed', () => syncQLab(getShow()));
+	// QLab and the console's mute group buttons follow the open show's settings.
+	// ('changed' also fires on every level edit, so only re-sync buttons when the map changes.)
+	let lastButtonMap;
+	showEvents.on('changed', () => {
+		syncQLab(getShow());
+		sync_channel_monitor();
+
+		const {map, source} = effectiveButtonMap(getShow());
+		const buttonMap = getShow() ? `${source}:${map}` : null;
+		if (buttonMap !== lastButtonMap) {
+			lastButtonMap = buttonMap;
+			syncConsoleButtons(getShow());
+		}
+	});
+
+	// Console Go / Back buttons run like OSC commands (still work with a popup open)
+	setButtonActionHandler((action) => sendMenuAction({action, remote: true}));
+
+	// Console Setup shows button presses live, and refreshes when mute groups change
+	const broadcast = (channel, value) => {
+		for (const window of BrowserWindow.getAllWindows()) {
+			if (!window.isDestroyed()) window.webContents.send(channel, value);
+		}
+	};
+	buttonEvents.on('activity', (activity) => broadcast('console-buttons-activity', activity));
+	buttonEvents.on('changed', () => broadcast('console-buttons-changed'));
 	qlabEvents.on('status', (status) => getMainWindow()?.webContents.send('qlab-status', status));
 
 	// TheatreMix-compatible OSC API (QLab network cues, Stream Deck...)

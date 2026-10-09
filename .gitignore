@@ -92,3 +92,6 @@ typings/
 out/
 
 logs/
+# Simulator: discovery clients remembered between runs
+sim/.probe_targets.json
+__pycache__/

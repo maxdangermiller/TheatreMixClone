@@ -43,6 +43,12 @@ class ShowFile {
      */
     dcaLevels;
 
+    /**
+     * StudioLive console setup (stored in .tmixp files), e.g. { muteButtonMap: "0=6,1=5" }
+     * @type {Object<string, string>}
+     */
+    consoleSetup;
+
     constructor() {
 
         this.actors = [];
@@ -58,6 +64,8 @@ class ShowFile {
         this.config = {};
 
         this.dcaLevels = {};
+
+        this.consoleSetup = {};
     }
 }
 
