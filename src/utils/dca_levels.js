@@ -9,8 +9,13 @@
 const MIN_DCA_LEVEL = -84;
 const MAX_DCA_LEVEL = 10;
 
-// Level used when a DCA comes up and no level has been set for it
-const DEFAULT_DCA_LEVEL = -20;
+// Where the level popup's slider starts when no level is set (unity). With no level set a
+// DCA isn't moved: it takes the level its people were last mixed at, or stays where it is.
+const DEFAULT_DCA_LEVEL = 0;
+
+// Where a DCA comes up the first time it gets people (no level set for the cue and none of
+// them mixed yet), so it's at a safe, usable level rather than wherever the fader was
+const NEW_DCA_LEVEL = -20;
 
 /**
  * Key for a cue in the DCA level map (cues are unique by number + point)
@@ -84,7 +89,7 @@ const fader_to_level = (fader) => {
 }
 
 export {
-	MIN_DCA_LEVEL, MAX_DCA_LEVEL, DEFAULT_DCA_LEVEL,
+	MIN_DCA_LEVEL, MAX_DCA_LEVEL, DEFAULT_DCA_LEVEL, NEW_DCA_LEVEL,
 	dca_level_key, get_dca_level, clamp_dca_level, format_dca_level,
 	level_to_fader, fader_to_level
 };

@@ -17,7 +17,18 @@ const DEFAULTS = {
 	rowSize: 'medium',
 	/** Prevent edits (e.g. DCA levels) in the cue list */
 	lockEditing: false,
+	/** A person's DCA fader level follows them when they move to another DCA */
+	levelsFollowPeople: true,
+	/** Going Back into a cue restores its DCA faders and mutes as they were when it was left */
+	restoreOnBack: true,
+	/** On launch, connect to the last console if it's found */
+	autoConnect: true,
+	/** @type {{host: String, port: Number, name: String | null, serial: String | null} | null} last console connected to */
+	lastConsole: null,
 };
+
+// On/off preferences, checked when loading
+const BOOLEAN_SETTINGS = ['lockEditing', 'levelsFollowPeople', 'restoreOnBack', 'autoConnect'];
 
 let settings = null;
 
@@ -37,7 +48,10 @@ function getSettings() {
 
 		if (Array.isArray(saved.recentFiles)) settings.recentFiles = saved.recentFiles.filter((f) => typeof f === 'string');
 		if (ROW_SIZES.includes(saved.rowSize)) settings.rowSize = saved.rowSize;
-		if (typeof saved.lockEditing === 'boolean') settings.lockEditing = saved.lockEditing;
+		for (const key of BOOLEAN_SETTINGS) {
+			if (typeof saved[key] === 'boolean') settings[key] = saved[key];
+		}
+		if (typeof saved.lastConsole?.host === 'string') settings.lastConsole = saved.lastConsole;
 	} catch {
 		// No settings yet (first launch) or unreadable - use defaults, and carry over
 		// the shows from the OS recent documents list the app used before

@@ -249,17 +249,20 @@ const Editor = ({showData, setShowData}) => {
 	 * @fires goToRow()
 	 */
 	const handleGlobalKey = (event) => {
+		event.preventDefault();
 		// Don't fire cues while a popup is open or while typing
 		if (dialog_open || is_text_field(event.target)) {
 			return;
 		}
 
+		console.log(event.code);
 
-		if (event.ctrlKey && event.code === 'Space') {
+
+		if ((event.ctrlKey && event.code === 'Space') || event.code == 'ArrowUp') {
 			event.preventDefault();
 			goToRow(cue_index - 1, {back: true});
 		}
-		else if (event.code === 'Space') {
+		else if (event.code === 'Space' || event.code == 'ArrowDown') {
 			event.preventDefault();
 			goToRow(cue_index + 1);
 		}
@@ -280,7 +283,7 @@ const Editor = ({showData, setShowData}) => {
 
 	/**
 	 * Save the level from the popup
-	 * @param {Number | null} level dB, or null to use the default
+	 * @param {Number | null} level dB, or null to keep the level (follow the people on the DCA)
 	 */
 	const saveDcaLevel = async (level) => {
 		const {cue, dca} = level_dialog;

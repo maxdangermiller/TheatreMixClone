@@ -1,19 +1,22 @@
 // main/channelMonitor.js
-// Automatic channel monitoring, like TheatreMix: each monitored channel's colour on the
+// Automatic channel monitoring, like TheatreMix: each monitored channel's color on the
 // console shows its state at a glance.
 //   red    - nearly clipping (faulty cable or connector), held a while so it can be checked
 //   blue   - silent for a few seconds (mic off, flat battery, out of range)
 //   yellow - has signal and is in one of the current cue's DCAs
 //   white  - has signal
 //
-// Levels come from the console's meter frames: meter group 0 ("input signal"), one
-// 16-bit linear value per line channel, 65535 = 0 dBFS (checked against Universal
-// Control's meters with the simulator).
+// Levels come from the console's meter frames. Each group id is [channel type][metering
+// stage]; line channels are type 0 (groups 0-255, a real StudioLive 32 sends stages 4-6),
+// one 16-bit linear value per channel, 65535 = 0 dBFS. The console trims each group's
+// trailing silent channels and leaves out groups that are entirely silent (checked against
+// ~18,500 captured frames), so a missing channel or group means silence, not "no data".
+// A channel's level is its loudest line stage.
 
 import { debugLog } from './debugLog.js';
 
-// Meter group with each line channel's input level
-const INPUT_SIGNAL_GROUP = 0;
+// Line channel meter groups are type byte 0
+const isLineGroup = (group) => group >= 0 && group < 256;
 
 // Below this for SILENCE_MS -> blue. Back above RESTORE_DB -> white/yellow. The gap stops a
 // channel hovering at the threshold from flickering.
@@ -28,7 +31,7 @@ const CLIP_HOLD_MS = 10000;
 // If no meter frames arrive for this long, stop judging silence (no data is not silence)
 const METER_TIMEOUT_MS = 2000;
 
-// Colours from the StudioLive's own channel palette
+// Colors from the StudioLive's own channel palette
 const COLORS = {
 	clip: "ff0000",
 	silent: "0000ff",
@@ -46,14 +49,15 @@ let channels = [];
 let activeChannels = new Set();
 
 /**
- * Per channel: {lastSignal: ms, silent: boolean, clipUntil: ms (0 = not clipping), sent: colour last sent | null, level: dB}
+ * Per channel: {lastSignal: ms, silent: boolean, clipUntil: ms (0 = not clipping), sent: color last sent | null, level: dB}
  * @type {Map<number, {lastSignal: number, silent: boolean, clipUntil: number, sent: string | null, level: number}>}
  */
 const channelState = new Map();
 
 let lastFrameAt = 0;
 let metersFlowing = false;
-let loggedLayout = null;
+/** Meter groups seen since connecting (logged as they first appear) */
+let seenGroups = new Set();
 
 const toDb = (value) => value > 0 ? 20 * Math.log10(value / 65535) : -Infinity;
 const formatDb = (db) => Number.isFinite(db) ? `${db.toFixed(1)} dB` : "-∞";
@@ -66,7 +70,7 @@ const stateFor = (ch) => {
 }
 
 /**
- * Send a channel's colour if it changed
+ * Send a channel's color if it changed
  * @param {Number} ch
  * @param {String} reason for the log
  */
@@ -86,7 +90,7 @@ const applyColor = (ch, reason) => {
 		client.setColor({type: 'LINE', channel: ch}, color);
 		state.sent = color;
 	} catch (error) {
-		debugLog('METERS', `Couldn't colour channel ${ch}`, error.message);
+		debugLog('METERS', `Couldn't color channel ${ch}`, error.message);
 	}
 }
 
@@ -97,21 +101,19 @@ const applyColor = (ch, reason) => {
 const handleMeters = (meterData) => {
 	const now = Date.now();
 
-	// Log the layout once (and if it changes), so a console that sends something else shows up
-	const layout = Object.entries(meterData)
-		.filter(([key]) => key !== 'type')
-		.map(([group, values]) => `${group}:${values.length}`)
-		.join(" ");
-	if (layout !== loggedLayout) {
-		loggedLayout = layout;
-		debugLog('METERS', `Meter layout (group:count): ${layout}`);
-		if (!meterData[INPUT_SIGNAL_GROUP]) {
-			debugLog('METERS', `WARNING: no input signal meters (group ${INPUT_SIGNAL_GROUP}) in this frame; channel monitoring can't run`);
-		}
+	// Groups come and go as they go silent, so just log each one the first time it shows up
+	const groups = Object.keys(meterData).filter((key) => key !== 'type').map(Number);
+	const newGroups = groups.filter((group) => !seenGroups.has(group));
+	if (newGroups.length) {
+		newGroups.forEach((group) => seenGroups.add(group));
+		debugLog('METERS', `New meter groups (group:count): ${newGroups.map((g) => `${g}:${meterData[g].length}`).join(" ")}; line groups so far: ${[...seenGroups].filter(isLineGroup).join(", ") || "none"}`);
 	}
 
-	const levels = meterData[INPUT_SIGNAL_GROUP];
-	if (!levels) return;
+	// Loudest line stage per channel (index = channel - 1); anything not sent is silent
+	const levels = [];
+	for (const group of groups.filter(isLineGroup)) {
+		meterData[group].forEach((value, i) => { levels[i] = Math.max(levels[i] ?? 0, value); });
+	}
 
 	if (!metersFlowing) {
 		metersFlowing = true;
@@ -122,8 +124,7 @@ const handleMeters = (meterData) => {
 	lastFrameAt = now;
 
 	for (const ch of channels) {
-		const value = levels[ch - 1];
-		if (value === undefined) continue;
+		const value = levels[ch - 1] ?? 0;
 
 		const state = stateFor(ch);
 		state.level = toDb(value);
@@ -157,7 +158,7 @@ const handleMeters = (meterData) => {
 			continue;
 		}
 
-		// First frame after (re)connecting, or the cue changed: make sure the colour is right
+		// First frame after (re)connecting, or the cue changed: make sure the color is right
 		if (state.sent === null) applyColor(ch, "initial");
 	}
 }
@@ -173,7 +174,7 @@ setInterval(() => {
 }, 1000).unref?.();
 
 /**
- * Start monitoring a newly connected console. Colours are re-sent from scratch.
+ * Start monitoring a newly connected console. Colors are re-sent from scratch.
  * @param {import('@featherbear/presonus-studiolive-api').Client} newClient
  */
 const attachChannelMonitor = (newClient) => {
@@ -189,11 +190,11 @@ const detachChannelMonitor = () => {
 }
 
 /**
- * Forget the colours we've sent (new connection, or the console may have been reset)
+ * Forget the colors we've sent (new connection, or the console may have been reset)
  */
 const resetChannelMonitor = () => {
 	for (const state of channelState.values()) state.sent = null;
-	loggedLayout = null;
+	seenGroups = new Set();
 }
 
 /**

@@ -370,8 +370,8 @@ def dca_row(state: "StateTree", n: int) -> tuple[str, str, str, str, str, str]:
     return (str(n), str(name), level, db, str(len(members)), ", ".join(members) if members else "-")
 
 
-# TheatreMix colours a DCA label by what happens to it in the NEXT cue (theatremix.com/features#dcaColours).
-# The console has no cues, so only two states come from the console itself: grey = no channels (placeholder) and
+# TheatreMix colors a DCA label by what happens to it in the NEXT cue (theatremix.com/features#dcaColours).
+# The console has no cues, so only two states come from the console itself: gray = no channels (placeholder) and
 # inverted = 2+ channels (ensemble DCA). The cue-based ones are set by hand with the `tag` command.
 DCA_TAGS = {
     "white": "DCA assignment changes next",
@@ -384,7 +384,7 @@ DCA_TAGS = {
     "skip": "cue will be skipped (purple)",
 }
 _ANSI = {"white": "97", "green": "32", "cyan": "36", "orange": "38;5;208", "yellow": "33", "magenta": "35",
-         "skip": "38;5;129", "grey": "90"}   # orange/purple use the 256-colour palette (Terminal.app has no truecolor)
+         "skip": "38;5;129", "gray": "90"}   # orange/purple use the 256-color palette (Terminal.app has no truecolor)
 
 
 def _style_row(text: str, members: int, tag: Optional[str]) -> str:
@@ -393,9 +393,9 @@ def _style_row(text: str, members: int, tag: Optional[str]) -> str:
         codes.append("7")                                    # inverted: ensemble DCA
     if tag == "cut":
         codes.append("9")                                    # strikethrough
-    colour = _ANSI.get(tag) if tag else ("90" if members == 0 else None)   # grey placeholder unless tagged
-    if colour:
-        codes.append(colour)
+    color = _ANSI.get(tag) if tag else ("90" if members == 0 else None)   # gray placeholder unless tagged
+    if color:
+        codes.append(color)
     return f"\x1b[{';'.join(codes)}m{text}\x1b[0m" if codes else text
 
 
@@ -451,7 +451,7 @@ def format_legend(color: bool = False) -> str:
         return f"\x1b[{codes}m{label}\x1b[0m" if color and codes else label
 
     rows = [f"{paint(tag, '9' if tag == 'cut' else _ANSI.get(tag, ''))} {meaning}" for tag, meaning in DCA_TAGS.items()]
-    rows.append(f"{paint('grey', _ANSI['grey'])} no channels assigned (automatic)")
+    rows.append(f"{paint('gray', _ANSI['gray'])} no channels assigned (automatic)")
     rows.append(f"{paint('inverted', '7')} 2+ channels assigned: ensemble DCA (automatic)")
     return "\n".join(rows)
 
@@ -638,6 +638,12 @@ DEVICE_TYPES = {"StudioLive 32": 0x25, "StudioLive 24R": 0x04}
 DEFAULT_DEVICE_TYPE = 0x04
 
 
+# Device IDs of real consoles, by serial (from their discovery announces in scans/)
+KNOWN_GUIDS = {
+    "SD3E19010055": "eadc21b57e50b84da5c4fa37ee2cc770",  # StudioLive 32 Hayden
+}
+
+
 def build_discovery_packet(model: str, serial: str, name: str, guid: bytes, port: int = CONTROL_PORT,
                            device_type: Optional[int] = None) -> bytes:
     """'DA' announce. Not standard framing: bytes 4-5 are the console's source port."""
@@ -672,14 +678,17 @@ def build_ck(offset: int, total: int, chunk: bytes) -> bytes:
 # 4 aux, 5 fx, 6 sub, 7 main, 8 mono); the rest are filler so a consumer indexing any group 0-15 finds something.
 # Meter groups a real StudioLive 32 sends in every 'levl' frame, in order (scans/UC-capture5.pcapng).
 # Group id bytes are [channel type][metering stage].  Values are u16, 0 when silent.
-REAL_METER_LAYOUT = [(256, 6), (4, 20), (5, 20), (6, 20), (258, 6), (259, 6), (260, 6), (261, 6),
+# Line groups (type byte 0) hold one value per line channel; the capture's 20 is just where its
+# trailing silent channels were trimmed, so they're sized for all 32 here (see build_meter_frame).
+REAL_METER_LAYOUT = [(256, 6), (4, 32), (5, 32), (6, 32), (258, 6), (259, 6), (260, 6), (261, 6),
                      (1024, 1), (1026, 16), (1027, 16), (1028, 16), (1029, 16),
                      (1280, 2), (1282, 2), (1283, 2), (1285, 2),
                      (1792, 2), (1794, 2), (1795, 2), (1796, 2), (1797, 2)]
 
 
-# Line channels in meter group 0, and the dB <-> meter value scale (linear, 65535 = 0 dBFS,
-# checked against Universal Control's meters)
+# Line channel meter groups (type byte 0, metering stages 4-6), and the dB <-> meter value scale
+# (linear, 65535 = 0 dBFS, checked against Universal Control's meters)
+INPUT_METER_GROUPS = (4, 5, 6)
 INPUT_METER_COUNT = 32
 
 
@@ -694,14 +703,21 @@ def build_meter_frame(layout: list, values: dict, cbytes: bytes, port: int = CON
       "levl" | 2 zero bytes | u16 valueCount | valueCount x u16 LE | u8 groupCount |
       groupCount x (int16 BE group, int16 LE offset, int16 LE count)
     values: {(group, index): u16}; anything not set is 0 (silence).
+    Like the real console, each group's trailing zeros are trimmed and an all-silent group is left
+    out (in ~18,500 captured frames no group ever ended in a 0; counts like 1024:1 vs 1024:2 vary).
     """
     vals: list[int] = []
     desc = b""
     for group, n in layout:
-        desc += struct.pack(">h", group) + struct.pack("<hh", len(vals), n)
-        vals.extend(int(max(0, min(65535, values.get((group, i), 0)))) for i in range(n))
+        group_vals = [int(max(0, min(65535, values.get((group, i), 0)))) for i in range(n)]
+        while group_vals and group_vals[-1] == 0:
+            group_vals.pop()
+        if not group_vals:
+            continue
+        desc += struct.pack(">h", group) + struct.pack("<hh", len(vals), len(group_vals))
+        vals.extend(group_vals)
     body = (b"levl" + struct.pack("<HH", 0, len(vals)) + struct.pack(f"<{len(vals)}H", *vals)
-            + bytes([len(layout)]) + desc)
+            + bytes([len(desc) // 6]) + desc)
     return HEADER + struct.pack("<H", port) + b"MS" + cbytes + body
 
 
@@ -832,7 +848,7 @@ class Session:
             log.info("%s Subscribe %s", self, {k: v for k, v in msg.items() if k != "id"})
             handshake = self.sim.handshake
             if handshake is None:
-                # Old behaviour (--no-handshake): enough for the client library, not for Universal Control
+                # Old behavior (--no-handshake): enough for the client library, not for Universal Control
                 await self.send(b"JM", json_body(SUBSCRIPTION_REPLY), cb)
                 await self.send_state(cb)
                 return
@@ -928,10 +944,8 @@ class Simulator:
         self.args = args
         # Meter levels sent in every 'levl' frame: {(group, index): u16}; set with the `meter` command
         self.meter_values: dict = {}
-        # Extra meter groups appended to the real layout: [(group, count)]. Group 0 ("input signal",
-        # one value per line channel) drives Universal Control's channel meters and the app's channel
-        # monitoring; the capture didn't contain it (its inputs were idle), so --no-input-meters leaves it out.
-        self.meter_extra_groups: list = [] if args.no_input_meters else [(0, INPUT_METER_COUNT)]
+        # Extra meter groups appended to the real layout: [(group, count)] (meter addgroup)
+        self.meter_extra_groups: list = []
         # (ip, port) of clients that probed for consoles; announces are sent to them too. Remembered in
         # PROBE_CACHE_FILE so a restarted simulator reappears in an already-open Universal Control (it
         # only probes when it starts, and loopback can't carry the broadcast a real console relies on).
@@ -951,8 +965,11 @@ class Simulator:
         args.model = args.model or self.state.get("global/mixer_name") or "StudioLive 32"
         args.serial = args.serial or self.state.get("global/mixer_serial") or "SL3E21000001"
         args.name = args.name or self.state.get("global/devicename") or args.model
-        # 16-byte device ID in the announce: --guid (e.g. a real console's) or derived from the serial
-        self.guid = bytes.fromhex(args.guid.replace("-", "")) if args.guid else uuid.uuid5(uuid.NAMESPACE_DNS, args.serial).bytes
+        # 16-byte device ID in the announce: --guid, the real console's if this is its serial, or derived
+        # from the serial. Universal Control silently ignores a console whose serial it has seen before
+        # with a different ID, so the real console's serial must come with its real ID.
+        guid = args.guid or KNOWN_GUIDS.get(args.serial)
+        self.guid = bytes.fromhex(guid.replace("-", "")) if guid else uuid.uuid5(uuid.NAMESPACE_DNS, args.serial).bytes
         self.tx: Optional[asyncio.DatagramTransport] = None
         self._announced: set = set()
         self.dca_tags: dict[int, str] = {}
@@ -1015,13 +1032,14 @@ class Simulator:
         self.broadcast(b"PV", build_pv(key, value))
 
     def signal_command(self, args: list) -> str:
-        """signal <ch|all> <dB|off>: set a line channel's input meter (group 0), e.g. signal 3 -20"""
+        """signal <ch|all> <dB|off>: set a line channel's meters (groups 4-6), e.g. signal 3 -20"""
         if len(args) != 2:
             return "usage: signal <channel|all> <dB|off>   e.g.  signal 3 -20   signal all off"
         level = 0 if args[1] == "off" else db_to_meter(float(args[1]))
         chans = range(1, INPUT_METER_COUNT + 1) if args[0] == "all" else [int(args[0])]
         for ch in chans:
-            self.meter_values[(0, ch - 1)] = level
+            for group in INPUT_METER_GROUPS:
+                self.meter_values[(group, ch - 1)] = level
         if not self.args.meter_hz:
             return "note: meters are off; start with --meter-hz 20"
         return f"input signal ch {args[0]} = {args[1]}{'' if args[1] == 'off' else ' dBFS'} (meter value {level})"
@@ -1053,6 +1071,15 @@ class Simulator:
         for c in clients:
             await c.send(b"PV", b"permissions/device_list\0\0\0" + struct.pack("<f", 0.5), c.push_cb)
             await c.send(b"PL", body, c.push_cb)
+
+    def press_mute_group(self, group: int) -> str:
+        """A mute group button pressed on the console. A real StudioLive 32 won't latch an empty
+        mute group: every press of one only sends mutegroupN = 0 (seen on hardware 2026-10-09)."""
+        members = self.state.get(f"mutegroup/mutegroup{group}mutes")
+        empty = not (isinstance(members, str) and "1" in members)
+        latched = not empty and not self.state.get(f"mutegroup/mutegroup{group}")
+        self.push_pv(f"mutegroup/mutegroup{group}", 1.0 if latched else 0.0)
+        return f"mute group {group} pressed ({'empty: sent 0, like the real console' if empty else 'on' if latched else 'off'})"
 
     def push_ps(self, key: str, value: str) -> None:
         self.state.set(key, value)
@@ -1147,6 +1174,8 @@ class Simulator:
             if not self.tx:
                 continue
             layout = REAL_METER_LAYOUT + self.meter_extra_groups
+            if self.args.no_input_meters:
+                layout = [(g, n) for g, n in layout if g >= 256]
             for s in list(self.sessions):
                 if s.meter_port:
                     # A client on this machine (e.g. Universal Control) binds its meter socket per adapter
@@ -1162,12 +1191,14 @@ HELP = """commands:
   set <key> <float>     push a parameter change, e.g.  set line/ch1/mute 1
   signal <ch|all> <dB|off>  input level on a line channel (needs --meter-hz), e.g.  signal 3 -20 ;  signal all off
   meter <g> <i|all> <v> raw meter value in any group, e.g.  meter 4 0 30000 ;  meter clear
+  press <n>             press mute group n's button like on the real console: an empty group doesn't
+                        latch, so it only sends mutegroupN = 0; one with channels in it latches on (= 1)
   name <key> <text>     push a string change,           e.g.  name line/ch1/username Kick
   get <key>             read a value from the state tree
   dca [n|all]           DCA table: first 8 DCAs with level and channels (n = just DCA n; all = every DCA)
-  tag <n|all> <status>  set a DCA's next-cue colour (the console has no cues): white green cyan orange yellow
+  tag <n|all> <status>  set a DCA's next-cue color (the console has no cues): white green cyan orange yellow
                         magenta cut skip, or clear.  `tag clear` resets all
-  legend                what the DCA colours mean
+  legend                what the DCA colors mean
   lines                 table of every line channel's name and level
   clients               list connected clients
   kick [id]             disconnect one client (or all)
@@ -1188,6 +1219,8 @@ async def repl(sim: Simulator) -> None:
         try:
             if cmd == "set" and len(parts) == 3:
                 sim.push_pv(parts[1], float(parts[2]))
+            elif cmd == "press" and len(parts) == 2:
+                print(sim.press_mute_group(int(parts[1])))
             elif cmd == "signal":
                 print(sim.signal_command(line.strip().split()[1:]))
             elif cmd == "meter":
@@ -1251,7 +1284,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap.add_argument("--serial", help="default: from --state-file, else a made-up serial")
     ap.add_argument("--device-type", type=lambda v: int(v, 0),
                     help="model code in the discovery announce, e.g. 0x25 (default: from --model, see DEVICE_TYPES)")
-    ap.add_argument("--guid", help="16-byte device ID in the announce, as hex (default: derived from the serial)")
+    ap.add_argument("--guid", help="16-byte device ID in the announce, as hex (default: the real console's for a known serial, "
+                         "else derived from the serial)")
     ap.add_argument("--bind-ip", default="0.0.0.0", help="interface for TCP + UDP (also selects the broadcast interface)")
     ap.add_argument("--port", type=int, default=CONTROL_PORT)
     ap.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT)
@@ -1264,7 +1298,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap.add_argument("--no-dq-listener", action="store_true",
                     help="announce only; don't bind UDP 47809 (use when a client runs on this same machine)")
     ap.add_argument("--no-input-meters", action="store_true",
-                    help="leave meter group 0 (line input levels) out, exactly like the capture")
+                    help="never send line channel meters (groups 0-255), e.g. to test the app with no input meters")
     ap.add_argument("--meter-hz", type=float, default=0.0,
                     help="UDP meter frames per second (default 0 = off; a real console sends ~20). "
                          "Same format as a real console, so Universal Control shows them")

@@ -4,6 +4,7 @@ import { is_ip_valid } from '../utils/ip_tools';
 
 import { TEXT_COLOR, SELECTED_COLOR } from './utils/colors.jsx';
 import MuteGroupButtons from './MuteGroupButtons.jsx';
+import DcaRecallOptions from './DcaRecallOptions.jsx';
 
 // How long a button press lights up in the mute group grid
 const FLASH_MS = 700;
@@ -85,7 +86,7 @@ const FOOTER_STYLE = {
 
 const BUTTON_GROUP_STYLE = {display: "flex", gap: "10px"};
 
-// Status column colours
+// Status column colors
 const STATUS_COLORS = {connected: "#3cc83c", connecting: "#e0a800"};
 
 /**
@@ -122,6 +123,15 @@ const Settings = () => {
     const buttonsDirtyRef = useRef(false);
     buttonsDirtyRef.current = buttonsDirty;
 
+    // DCA Recall preferences: edits not applied yet
+    const [recall, setRecall] = useState(null);
+    const [recallDirty, setRecallDirty] = useState(false);
+
+    const editRecall = (next) => {
+        setRecall(next);
+        setRecallDirty(true);
+    }
+
     /**
      * Re-read the button setup (keeps unapplied edits)
      */
@@ -140,6 +150,12 @@ const Settings = () => {
      * Save the mute group button edits into the show
      */
     const apply = async () => {
+        if (recallDirty) {
+            setRecall(await window.consoleSetupApi.setRecall(recall));
+            setRecallDirty(false);
+            if (!buttonsDirty) setStatus("Preferences saved.");
+        }
+
         if (!buttonsDirty) return;
 
         const setup = await window.consoleSetupApi.setButtonMap(pendingButtons);
@@ -190,7 +206,8 @@ const Settings = () => {
 				const result = await window.presonus.connect(
 					board.ip,
 					board.port,
-					board.placeholder ? undefined : board.name
+					board.placeholder ? undefined : board.name,
+					board.placeholder ? undefined : board.serial
 				);
 
 				console.log('Connection result:', result);
@@ -257,14 +274,15 @@ const Settings = () => {
         const unsubscribeChanged = window.consoleSetupApi.onChanged(loadButtonSetup);
 
         // Light up a button when it's pressed on the console
-        const unsubscribeActivity = window.consoleSetupApi.onButtonActivity(({group, on, fired}) => {
-            if (!on) return;
+        const unsubscribeActivity = window.consoleSetupApi.onButtonActivity(({group, pressed, fired}) => {
+            if (!pressed) return;
             const at = Date.now();
             setFlashes((prev) => ({...prev, [group]: {fired, at}}));
             setTimeout(() => setFlashes((prev) => prev[group]?.at === at ? (({[group]: _, ...rest}) => rest)(prev) : prev), FLASH_MS);
         });
 
         loadButtonSetup();
+        window.consoleSetupApi.getRecall().then(setRecall);
         start_discovery();
 
         return () => {
@@ -285,7 +303,7 @@ const Settings = () => {
 
         window.addEventListener('keydown', handleKey);
         return () => window.removeEventListener('keydown', handleKey);
-    }, [selRow, devices, connecting, buttonsDirty, pendingButtons, consoleStatus]);
+    }, [selRow, devices, connecting, buttonsDirty, pendingButtons, consoleStatus, recall, recallDirty]);
 
     const isConnected = consoleStatus.state !== 'disconnected';
 
@@ -340,7 +358,17 @@ const Settings = () => {
 
                 <div style={{minHeight: "1.3em", fontSize: 13, textAlign: "center", opacity: 0.85}}>{status}</div>
 
-                <div style={{...BUTTON_GROUP_STYLE, justifyContent: "center"}}>
+                <div style={{...BUTTON_GROUP_STYLE, justifyContent: "center", alignItems: "center"}}>
+                    <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: 13, marginRight: "10px"}}
+                        title="When the app opens, connect to the last console if it's found on the network">
+                        <input
+                            type="checkbox"
+                            checked={recall?.autoConnect ?? true}
+                            disabled={recall === null}
+                            onChange={(e) => editRecall({...recall, autoConnect: e.target.checked})}
+                        />
+                        Connect automatically on launch
+                    </label>
                     <button className="dialog-button" onClick={start_discovery} disabled={searching}>Rescan</button>
                     {/* Not built yet */}
                     <button className="dialog-button" disabled>Manual...</button>
@@ -353,12 +381,14 @@ const Settings = () => {
                     onChange={editButtons}
                     flashes={flashes}
                 />
+
+                <DcaRecallOptions values={recall} onChange={editRecall}/>
             </div>
 
             <div style={FOOTER_STYLE}>
                 <span style={BUTTON_GROUP_STYLE}>
                     <button className="dialog-button" onClick={disconnect} disabled={!isConnected}>Disconnect</button>
-                    <button className="dialog-button" onClick={apply} disabled={!buttonsDirty}>Apply</button>
+                    <button className="dialog-button" onClick={apply} disabled={!buttonsDirty && !recallDirty}>Apply</button>
                 </span>
                 <span style={BUTTON_GROUP_STYLE}>
                     <button className="dialog-button" onClick={close}>Cancel</button>

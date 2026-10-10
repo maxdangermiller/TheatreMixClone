@@ -114,7 +114,7 @@ async function closeShow() {
 
 /**
  * Info the menu needs to decide which items are enabled
- * @returns {{hasShow: boolean, isTmixp: boolean, canUndo: boolean, canRedo: boolean}}
+ * @returns {{hasShow: boolean, isTmixp: boolean, canUndo: boolean, canRedo: boolean, qLabEnabled: boolean, canSave: boolean}}
  */
 function getShowState() {
 	return {
@@ -124,6 +124,8 @@ function getShowState() {
 		canRedo: redoStack.length > 0,
 		// TheatreMix: Show Setup → QLab → "Recall QLab cues"
 		qLabEnabled: currentShow?.config?.qLabCues === "1",
+		// Save Show has something to do: unsaved changes, or a .tmix to save as a .tmixp
+		canSave: currentShow !== null && (dirty || path.extname(currentPath).toLowerCase() !== TMIXP_EXTENSION),
 	};
 }
 
@@ -345,7 +347,7 @@ async function saveShowAs() {
  * actors, profiles, config...). DCA levels are kept for every cue that still
  * exists (matched by cue number + point). The merge is held in memory and marked
  * unsaved; saving writes it into the .tmixp.
- * @returns {Promise<ShowFile | null>} merged show, or null if cancelled
+ * @returns {Promise<ShowFile | null>} merged show, or null if canceled
  */
 async function mergeTmix() {
 	const window = getMainWindow();

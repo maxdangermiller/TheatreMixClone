@@ -74,8 +74,8 @@ const PRIMARY_BUTTON_STYLE = {
  * @typedef {Object} DCALevelDialogProps
  * @property {String} title - e.g. "Cue 2.0 — DCA 3"
  * @property {String} label - DCA label shown under the title
- * @property {Number | null} level - current level in dB, or null if using the default
- * @property {Function} onSave - called with the new level in dB, or null to use the default
+ * @property {Number | null} level - current level in dB, or null if none is set (keep level)
+ * @property {Function} onSave - called with the new level in dB, or null to keep the level
  * @property {Function} onCancel
  */
 
@@ -88,7 +88,7 @@ const DCALevelDialog = ({title, label, level, onSave, onCancel}) => {
 	const [text, setText] = useState(String(level ?? DEFAULT_DCA_LEVEL));
 	const sliderRef = useRef(null);
 
-	const usingDefault = level === null;
+	const keepingLevel = level === null;
 
 	const update = (db) => {
 		const clamped = clamp_dca_level(db);
@@ -167,17 +167,17 @@ const DCALevelDialog = ({title, label, level, onSave, onCancel}) => {
 					</label>
 
 					<div style={HINT_STYLE}>
-						{usingDefault
-							? `Currently using the default (${format_dca_level(DEFAULT_DCA_LEVEL)}).`
-							: `Default is ${format_dca_level(DEFAULT_DCA_LEVEL)}.`}
+						{keepingLevel
+							? "No level set: the fader keeps the level these people were last mixed at."
+							: "The DCA goes to this level every time this cue fires."}
 						<br/>
-						Applied when this DCA is newly assigned in this cue.
+						Keep Level lets the fader follow the people on it instead.
 					</div>
 				</div>
 
 				<div style={{display: "flex", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid " + BORDER_COLOR}}>
-					<button style={BUTTON_STYLE} onClick={() => onSave(null)} disabled={usingDefault}>
-						Use Default
+					<button style={BUTTON_STYLE} onClick={() => onSave(null)} disabled={keepingLevel}>
+						Keep Level
 					</button>
 					<span style={{display: "flex", gap: "10px"}}>
 						<button style={BUTTON_STYLE} onClick={onCancel}>Cancel</button>

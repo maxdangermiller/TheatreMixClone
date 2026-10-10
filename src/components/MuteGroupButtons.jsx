@@ -56,7 +56,7 @@ const SELECT_STYLE = {
 
 const NOTE_STYLE = {fontSize: 11, lineHeight: 1.3, minHeight: "2.6em"};
 
-// Flash colours: green = fired an action, blue = pressed but not mapped
+// Flash colors: green = fired an action, blue = pressed but not mapped
 const FLASH_FIRED = "rgb(40, 120, 40)";
 const FLASH_PRESSED = "rgb(30, 70, 140)";
 
@@ -156,3 +156,4 @@ const MuteGroupButtons = ({setup, pending, onChange, flashes}) => {
 }
 
 export default MuteGroupButtons;
+export { BOX_STYLE, BOX_TITLE_STYLE };

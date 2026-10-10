@@ -24,7 +24,7 @@ const App = () => {
 
         const show = await window.showApi.loadShow(path);
 
-        // null when the user cancelled to keep unsaved changes
+        // null when the user canceled to keep unsaved changes
         if (show !== null) {
             setShowData(show);
         }

@@ -31,7 +31,7 @@ const DIVIDER_STYLE = {
 
 const isMac = navigator.userAgent.includes("Mac");
 
-// QLab status light colours
+// QLab status light colors
 const QLAB_COLORS = {connected: "#3cc83c", connecting: "#9a9a9a"};
 
 // Console Setup icon: green when connected (like TheatreMix), amber while (re)connecting
@@ -84,7 +84,7 @@ const shortcut = (keys) => {
  * @property {Function} [onClick] omitted for features that aren't built yet
  * @property {boolean} [disabled]
  * @property {boolean} [toggled]
- * @property {String} [color] icon colour (e.g. connection status)
+ * @property {String} [color] icon color (e.g. connection status)
  * @property {String} [tooltip] extra line shown above the label
  */
 
@@ -123,6 +123,9 @@ const MenuBar = ({load_show, hasShow}) => {
     const popupRef = useRef(null);
 
     const [lockEditing, setLockEditing] = useState(false);
+
+    // Save is grayed out when there's nothing to save
+    const [canSave, setCanSave] = useState(false);
 
     /** @type {[{state: String, workspace?: String, message?: String}, Function]} */
     const [qlab, setQLab] = useState({state: 'off'});
@@ -168,11 +171,14 @@ const MenuBar = ({load_show, hasShow}) => {
         const unsubscribeView = window.menuApi.onViewSettings((view) => setLockEditing(view.lockEditing));
         window.menuApi.getViewSettings().then((view) => setLockEditing(view.lockEditing));
 
+        const unsubscribeCanSave = window.showApi.onCanSave(setCanSave);
+        window.showApi.canSave().then(setCanSave);
+
         // QLab connection light
         const unsubscribeQLab = window.qlabApi.onStatus(setQLab);
         window.qlabApi.getStatus().then(setQLab);
 
-        // Console connection colours the Console Setup icon
+        // Console connection colors the Console Setup icon
         const unsubscribeConsole = window.presonus.onStatus(setConsoleStatus);
         window.presonus.getStatus().then(setConsoleStatus);
 
@@ -180,6 +186,7 @@ const MenuBar = ({load_show, hasShow}) => {
             unsubscribeMenu();
             unsubscribeView();
             unsubscribeQLab();
+            unsubscribeCanSave();
             unsubscribeConsole();
         };
     }, []);
@@ -189,7 +196,7 @@ const MenuBar = ({load_show, hasShow}) => {
             {/* Not built yet: New Show, cue editing, Assign, FX / Positions columns */}
             <ToolbarButton label="New Show" keys="Mod+N"><NewShowIcon/></ToolbarButton>
             <ToolbarButton label="Open Show" keys="Mod+O" onClick={handleOpenFile}><OpenShowIcon/></ToolbarButton>
-            <ToolbarButton label="Save Show" keys="Mod+S" onClick={() => window.showApi.save()} disabled={!hasShow}><SaveShowIcon/></ToolbarButton>
+            <ToolbarButton label="Save Show" keys="Mod+S" onClick={() => window.showApi.save()} disabled={!hasShow || !canSave}><SaveShowIcon/></ToolbarButton>
 
             <Divider/>
 

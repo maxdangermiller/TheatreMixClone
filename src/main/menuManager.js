@@ -138,7 +138,7 @@ const handle_row_size = (rowSize) => {
  * @returns {Electron.MenuItemConstructorOptions[]}
  */
 const buildTemplate = () => {
-	const {hasShow, isTmixp, qLabEnabled} = getShowState();
+	const {hasShow, isTmixp, qLabEnabled, canSave} = getShowState();
 	const {recentFiles, rowSize, lockEditing} = getSettings();
 
 	// Feature not in this app yet
@@ -179,7 +179,7 @@ const buildTemplate = () => {
 				},
 				{ label: 'Close Show', accelerator: 'CmdOrCtrl+W', enabled: hasShow, click: handle_close_show },
 				{ type: 'separator' },
-				{ label: 'Save Show', accelerator: 'CmdOrCtrl+S', enabled: hasShow, click: () => saveShow() },
+				{ label: 'Save Show', accelerator: 'CmdOrCtrl+S', enabled: canSave, click: () => saveShow() },
 				{ label: 'Save As...', accelerator: 'CmdOrCtrl+Shift+S', enabled: hasShow, click: () => saveShowAs() },
 				{ label: 'Export Notes...', ...notImplemented },
 				{ label: 'Merge Cues from .tmix...', enabled: isTmixp, click: handle_merge_tmix },

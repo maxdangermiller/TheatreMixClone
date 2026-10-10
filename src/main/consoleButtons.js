@@ -6,10 +6,11 @@
 // StudioLive Console Setup (saved in the .tmixp), or if that hasn't been set, from
 // TheatreMix's own setting (Console Setup → Mute Group Buttons) in the show's config.
 //
-// Pressing a mute group button on the console makes it send
-//   PV mutegroup/mutegroupN = 1
-// to every connected client. We run the action and immediately set the group back
-// to 0, so the button acts like a push button (mute groups normally latch on).
+// Pressing a mute group button on the console makes it send PV mutegroup/mutegroupN to
+// every connected client. A real StudioLive 32 won't latch an EMPTY mute group, so a press
+// only arrives as "= 0" (dad's console, 2026-10-09: every press logged as "off", never on).
+// A group with channels in it latches and sends "= 1"; then we run the action and set it
+// straight back to 0 so it acts like a push button, and ignore the "0" that follows.
 // Use EMPTY mute groups: pressing one that has channels in it also mutes them.
 
 import { EventEmitter } from 'node:events';
@@ -20,6 +21,9 @@ const MUTE_GROUP_COUNT = 8;
 
 // Ignore a second press of the same button within this time (contact bounce / double taps)
 const DEBOUNCE_MS = 300;
+
+// An "off" this soon after an "on" (or our own reset) is that press ending, not a new press
+const RELEASE_MS = 1000;
 
 // TheatreMix action numbers. Only Go and Back are supported here; the others are
 // listed (in TheatreMix's order) so the log can name them.
@@ -45,7 +49,7 @@ let logAllMessages = false;
 const stats = new Map();
 
 /**
- * 'activity' {group, on, action, fired} for every mute group change (Console Setup shows
+ * 'activity' {group, on, pressed, action, fired} for every mute group change (Console Setup shows
  * presses live); 'changed' when the map or console mute groups are re-read
  */
 const buttonEvents = new EventEmitter();
@@ -56,7 +60,7 @@ let mapSource = 'none';
 // #region Helpers
 
 const statFor = (group) => {
-	if (!stats.has(group)) stats.set(group, {presses: 0, lastPress: null, lastValue: null, ignored: 0});
+	if (!stats.has(group)) stats.set(group, {presses: 0, lastPress: null, lastValue: null, ignored: 0, lastOn: 0, lastReset: 0});
 	return stats.get(group);
 }
 
@@ -167,6 +171,8 @@ const formatChannels = (channels) => {
 const resetGroup = (group) => {
 	if (client === null) return;
 
+	statFor(group).lastReset = Date.now();
+
 	const zero = Buffer.alloc(4);
 	zero.writeFloatLE(0);
 	client._sendPacket('PV', Buffer.concat([Buffer.from(`mutegroup/mutegroup${group}\0\0\0`), zero]));
@@ -189,21 +195,30 @@ const handleMuteGroup = (group, value) => {
 	const action = buttonMap.get(group);
 	const mapped = action !== undefined ? `mapped to ${actionName(action)}` : "not mapped";
 
-	// Tell Console Setup (it flashes the button), whether or not it's mapped
-	const notify = (fired) => buttonEvents.emit('activity', {group, on, action: action ?? null, fired});
+	const now = Date.now();
 
-	debugLog('BUTTONS', `Mute group ${group} -> ${on === null ? `unreadable value ${describe(value)}` : on ? "ON (pressed)" : "off"} (${mapped}, raw ${describe(value)})`);
+	// "off" right after an "on" or our reset is that press ending; otherwise it's a press
+	// of an empty mute group (the console doesn't latch those, so it only ever sends off)
+	const release = on === false && now - Math.max(stat.lastOn, stat.lastReset) < RELEASE_MS;
+	const pressed = on === true || (on === false && !release);
 
-	// Off is either a release on the console or our own reset coming back
-	if (on !== true || action === undefined) {
+	// Tell Console Setup (it flashes pressed buttons), whether or not it's mapped
+	const notify = (fired) => buttonEvents.emit('activity', {group, on, pressed, action: action ?? null, fired});
+
+	debugLog('BUTTONS', `Mute group ${group} -> ${on === null ? `unreadable value ${describe(value)}` : on ? "ON" : "off"}` +
+		`${pressed ? " (pressed)" : release ? " (release)" : ""} (${mapped}, raw ${describe(value)})`);
+
+	if (on === true) {
+		stat.lastOn = now;
+		// Make it a push button: turn it straight back off
+		if (action !== undefined) resetGroup(group);
+	}
+
+	if (!pressed || action === undefined) {
 		notify(false);
 		return;
 	}
 
-	// Make it a push button: turn it straight back off
-	resetGroup(group);
-
-	const now = Date.now();
 	if (stat.lastPress !== null && now - stat.lastPress < DEBOUNCE_MS) {
 		stat.ignored++;
 		debugLog('BUTTONS', `Mute group ${group}: ignored repeat press ${now - stat.lastPress}ms after the last one`);

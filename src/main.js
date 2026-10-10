@@ -2,15 +2,15 @@ import { app, BrowserWindow, ipcMain, Menu, shell, powerSaveBlocker } from 'elec
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
-import {discover, connect, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status, sync_channel_monitor} from './main/sound.js';
-import {showEvents, loadShow, getShow, saveShow, setDcaLevel, setConsoleSetup, undoDcaLevel, redoDcaLevel, isShowDirty, confirmDiscardChanges} from './main/showManager.js';
+import {discover, connect, auto_connect, show_opened, disconnect, write_cue, fire_sound_check, reset_console_state, get_console_status, sync_channel_monitor} from './main/sound.js';
+import {showEvents, loadShow, getShow, getShowState, saveShow, setDcaLevel, setConsoleSetup, undoDcaLevel, redoDcaLevel, isShowDirty, confirmDiscardChanges} from './main/showManager.js';
 import {qlabEvents, syncQLab, recallQLabCue, getQLabStatus, stopQLab} from './main/qlab.js';
 import {startOscServer, stopOscServer, notifyCueFired} from './main/oscServer.js';
 import {syncConsoleButtons, setButtonActionHandler, buttonEvents, effectiveButtonMap, serializeButtonMap, getButtonSetup} from './main/consoleButtons.js';
 
 import {handle_open_file} from './main/fileManager.js';
 import {initMenu, sendViewSettings, sendMenuAction, setLockEditing} from './main/menuManager.js';
-import {getSettings} from './main/settings.js';
+import {getSettings, updateSettings} from './main/settings.js';
 import fs from 'node:fs';
 // import {open_dialog} from './main/dialog.js';
 
@@ -66,13 +66,14 @@ ipcMain.handle('qlab:recall', async (_, cueNumber) => recallQLabCue(cueNumber));
 ipcMain.handle('qlab:get_status', async () => getQLabStatus());
 
 ipcMain.handle('show:load', async (_, path) => {
-	// Returns null if the user cancelled because of unsaved changes
+	// Returns null if the user canceled because of unsaved changes
 	if (!(await confirmDiscardChanges())) { return null; }
 
 	const show = loadShow(path);
 
-	// New show: the next cue rewrites every DCA
-	reset_console_state();
+	// New show: the next cue rewrites every DCA, and the editor starts on Line Checks
+	// (which goes on the console now if it's connected)
+	show_opened();
 
 	return show;
 });
@@ -90,6 +91,23 @@ ipcMain.handle('show:get', async () => { return getShow(); });
 ipcMain.handle('menu:trigger', async (_, action) => { sendMenuAction(action); });
 ipcMain.handle('app:set_lock_editing', async (_, locked) => { setLockEditing(locked); });
 ipcMain.handle('show:save', async () => { return saveShow(); });
+ipcMain.handle('show:can_save', async () => { return getShowState().canSave; });
+
+// Console Setup preferences: DCA Recall and "Connect automatically"
+const CONSOLE_PREFS = ['levelsFollowPeople', 'restoreOnBack', 'autoConnect'];
+const consolePrefs = () => Object.fromEntries(CONSOLE_PREFS.map((key) => [key, getSettings()[key]]));
+ipcMain.handle('app:get_recall_settings', async () => consolePrefs());
+ipcMain.handle('app:set_recall_settings', async (_, changes) => {
+	const allowed = {};
+	for (const key of CONSOLE_PREFS) {
+		if (typeof changes?.[key] === 'boolean') allowed[key] = changes[key];
+	}
+	updateSettings(allowed);
+	return consolePrefs();
+});
+
+/** Auto-connect runs once, when the main window first loads */
+let autoConnectStarted = false;
 
 ipcMain.handle('app:get_view_settings', async () => {
 	const {rowSize, lockEditing} = getSettings();
@@ -189,6 +207,12 @@ const createWindow = () => {
 
 	// On Load, open the most recent file if it exists
 	mainWindow.webContents.on('did-finish-load', () => {
+		// Connect to the last console if it's there (Console Setup → Connect automatically)
+		if (!autoConnectStarted) {
+			autoConnectStarted = true;
+			auto_connect(mainWindow.webContents);
+		}
+
 		// A file double-clicked in Finder before the app was ready wins over the recent list
 		if (pendingOpenFile !== null) {
 			mainWindow.webContents.send('file-opened', pendingOpenFile);
@@ -252,6 +276,7 @@ app.whenReady().then(() => {
 	// ('changed' also fires on every level edit, so only re-sync buttons when the map changes.)
 	let lastButtonMap;
 	showEvents.on('changed', () => {
+		getMainWindow()?.webContents.send('show-can-save', getShowState().canSave);
 		syncQLab(getShow());
 		sync_channel_monitor();
 

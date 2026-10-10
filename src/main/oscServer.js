@@ -4,7 +4,7 @@
 //
 // Supported:  /go  /back  /jump {number}  /jump selected  /select [up|down|current]
 //             /lock  /unlock  /undo  /redo  /theatremix  /thump  /subscribe
-// Events sent to subscribers:  /cuefired {number} {text} [colour]
+// Events sent to subscribers:  /cuefired {number} {text} [color]
 
 import { app } from 'electron';
 import dgram from 'node:dgram';
@@ -27,7 +27,7 @@ const UNSUPPORTED = [
 	'/togglebackup', '/allocatespare', '/togglespare', '/removespare',
 ];
 
-const CUE_COLOURS = {1: 'red', 2: 'yellow', 3: 'green', 4: 'blue', 5: 'purple'};
+const CUE_COLORS = {1: 'red', 2: 'yellow', 3: 'green', 4: 'blue', 5: 'purple'};
 
 /** @type {dgram.Socket} */
 let socket = null;
@@ -150,8 +150,8 @@ const notifyCueFired = (cue) => {
 		? ['0', 'Line Checks']
 		: [format_cue_number(cue.number, cue.point), cue.name ?? ""];
 
-	const colour = CUE_COLOURS[cue?.colour];
-	if (colour) args.push(colour);
+	const color = CUE_COLORS[cue?.colour];
+	if (color) args.push(color);
 
 	const packet = encodeMessage('/cuefired', args);
 	for (const sub of subscribers.values()) {

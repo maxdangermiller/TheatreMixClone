@@ -11,9 +11,10 @@ contextBridge.exposeInMainWorld('presonus', {
 	removeDeviceFoundListener: () =>
 		ipcRenderer.removeAllListeners('presonus:device-found'),
 
-	// name: console name from discovery, shown in the status tooltip
-  	connect: (host, port, name) =>
-	  	ipcRenderer.invoke('presonus:connect', { host, port, name }),
+	// name: console name from discovery, shown in the status tooltip; serial: remembered
+	// so the app can find this console again on launch (auto-connect)
+  	connect: (host, port, name, serial) =>
+	  	ipcRenderer.invoke('presonus:connect', { host, port, name, serial }),
 
 	// {state: 'disconnected' | 'connecting' | 'connected', host?, name?, message?}
 	getStatus: () =>
@@ -59,6 +60,11 @@ contextBridge.exposeInMainWorld('showApi', {
 	save: () =>
 		ipcRenderer.invoke('show:save'),
 
+	// Is there anything to save? (unsaved changes, or a .tmix not yet saved as a .tmixp)
+	canSave: () =>
+		ipcRenderer.invoke('show:can_save'),
+	onCanSave: (callback) => subscribe('show-can-save', callback),
+
 	// Return the updated level map, or null if there was nothing to undo / redo
 	undoDcaLevel: () =>
 		ipcRenderer.invoke('show:undo_dca_level'),
@@ -84,11 +90,15 @@ contextBridge.exposeInMainWorld('consoleSetupApi', {
 	// groupToAction: {muteGroup: actionId}; saved in the show (mark unsaved)
 	setButtonMap: (groupToAction) => ipcRenderer.invoke('console-setup:set_button_map', groupToAction),
 
-	// {group, on, action, fired} whenever a mute group changes on the console
+	// {group, on, pressed, action, fired} whenever a mute group changes on the console
 	onButtonActivity: (callback) => subscribe('console-buttons-activity', callback),
 
 	// Mute group names / channels or the show's map changed
 	onChanged: (callback) => subscribe('console-buttons-changed', callback),
+
+	// Console Setup preferences: {levelsFollowPeople, restoreOnBack, autoConnect}
+	getRecall: () => ipcRenderer.invoke('app:get_recall_settings'),
+	setRecall: (changes) => ipcRenderer.invoke('app:set_recall_settings', changes),
 });
 
 contextBridge.exposeInMainWorld('qlabApi', {
