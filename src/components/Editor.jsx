@@ -6,7 +6,7 @@ import { get_dca_level, format_dca_level } from '../utils/dca_levels.js';
 import DCALevelDialog from './DCALevelDialog.jsx';
 
 import { 
-	HEADER_COLOR, ACTIVE_CUE_COLOR, BORDER_COLOR, 
+	HEADER_COLOR, ACTIVE_CUE_ACCENT, ACTIVE_CUE_TINT, BORDER_COLOR, 
 	DEFAULT_ROW_COLOR, TEXT_COLOR, SELECTED_COLOR,
 	get_cue_color
 } from './utils/colors.jsx';
@@ -111,6 +111,24 @@ const SELECTED_ROW_STYLE = {
 	outline: `3px solid ${SELECTED_COLOR}`,
 	outlineOffset: '-3px'
 }
+
+/**
+ * A cue row's style. The active cue keeps its own color (so its color coding still shows) and
+ * is marked with a green tint and bold text; its cue number cell gets a green bar (active_cell).
+ * @param {String} color the cue's color
+ * @param {boolean} active
+ * @param {boolean} selected
+ */
+const row_style = (color, active, selected) => ({
+	backgroundColor: color,
+	...(active ? {backgroundImage: `linear-gradient(${ACTIVE_CUE_TINT}, ${ACTIVE_CUE_TINT})`, fontWeight: 'bold'} : {}),
+	...(selected ? SELECTED_ROW_STYLE : {}),
+});
+
+// The active cue's number cell: a bar down its left edge
+const active_cell = (style, active) => active
+	? {...style, boxShadow: `inset 9px 0 0 ${ACTIVE_CUE_ACCENT}`}
+	: style;
 
 /**
  * Is the user typing in a text field? (Undo / Redo / Space should go to the field)
@@ -481,14 +499,12 @@ const Editor = ({showData, setShowData}) => {
 			<tbody>
 				<tr 
 					key={-1} 
-					style={{
-						backgroundColor: -1 === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(-1),
-						...(selected_index === -1 ? SELECTED_ROW_STYLE : {}),
-					}}
+					style={row_style(get_cue_color(-1), -1 === cue_index, selected_index === -1)}
+					aria-current={-1 === cue_index ? "true" : undefined}
 					ref={(el) => (rowRefs.current[0] = el)}
 					onClick={() => set_selected_index(-1)}
 				>
-					<td style={sized(CUE_ITEM_STYLE)} onDoubleClick={(e) => handleCueDoubleClick(e, -1)}>0</td>
+					<td style={active_cell(sized(CUE_ITEM_STYLE), -1 === cue_index)} onDoubleClick={(e) => handleCueDoubleClick(e, -1)}>0</td>
 					<td style={sized(LINE_CHECKS_ITEM_STYLE)} onDoubleClick={(e) => handleCueDoubleClick(e, -1)}>Line Checks</td>
 					{show_qlab && <td style={sized(CUE_ITEM_STYLE)}></td>}
 					{DCA_NUMBERS.map((dca) => <td key={dca} style={sized(DCA_ITEM_STYLE)}></td>)}
@@ -497,14 +513,12 @@ const Editor = ({showData, setShowData}) => {
 				{getCues().map((cue, index) => (
 					<tr 
 						key={index} 
-						style={{
-							backgroundColor: index === cue_index ? ACTIVE_CUE_COLOR : get_cue_color(cue.colour),
-							...(selected_index === index ? SELECTED_ROW_STYLE : {}),
-						}}
+						style={row_style(get_cue_color(cue.colour), index === cue_index, selected_index === index)}
+						aria-current={index === cue_index ? "true" : undefined}
 						ref={(el) => (rowRefs.current[index + 1] = el)}
 						onClick={() => set_selected_index(index)}
 					>
-						<td style={sized(CUE_ITEM_STYLE)} onDoubleClick={(e) => handleCueDoubleClick(e, index)}>{format_cue_number(cue.number, cue.point)}</td>
+						<td style={active_cell(sized(CUE_ITEM_STYLE), index === cue_index)} onDoubleClick={(e) => handleCueDoubleClick(e, index)}>{format_cue_number(cue.number, cue.point)}</td>
 						<td style={sized(ROW_ITEM_STYLE)} onDoubleClick={(e) => handleCueDoubleClick(e, index)} title={cue.name}>{cue.name}</td>
 						{show_qlab && <td style={sized(CUE_ITEM_STYLE)} title={cue.qLabCue ? `QLab cue ${cue.qLabCue}` : undefined}>{cue.qLabCue}</td>}
 						{DCA_NUMBERS.map((dca) => {

@@ -7,7 +7,9 @@ const GREEN_HIGHLIGHT_COLOR = "#506d43";
 const BLUE_HIGHLIGHT_COLOR = "#40536a";
 const PURPLE_HIGHLIGHT_COLOR = "#664d77";
 const TEXT_COLOR = "#ffffff";
-const ACTIVE_CUE_COLOR = "#626198";
+// The active cue keeps its own color and gets this accent: a bar on its left edge and a light tint
+const ACTIVE_CUE_ACCENT = "#4ade80";
+const ACTIVE_CUE_TINT = "rgba(74, 222, 128, 0.18)";
 const BORDER_COLOR = "#111111";
 const SELECTED_COLOR = "#005BD9";
 
@@ -35,7 +37,7 @@ export {
     DEFAULT_ROW_COLOR, RED_HIGHLIGHT_COLOR,
     YELLOW_HIGHLIGHT_COLOR, GREEN_HIGHLIGHT_COLOR,
     BLUE_HIGHLIGHT_COLOR, PURPLE_HIGHLIGHT_COLOR, 
-    TEXT_COLOR, ACTIVE_CUE_COLOR, BORDER_COLOR,
+    TEXT_COLOR, ACTIVE_CUE_ACCENT, ACTIVE_CUE_TINT, BORDER_COLOR,
     SELECTED_COLOR,
     get_cue_color
 }

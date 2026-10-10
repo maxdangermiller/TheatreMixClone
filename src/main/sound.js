@@ -137,6 +137,12 @@ let dca_faders = new Map();
 let dca_mutes = new Map();
 
 /**
+ * Line mutes since connecting (on = muted), kept for the same reason as dca_mutes
+ * @type {Map<number, boolean>}
+ */
+let line_mutes = new Map();
+
+/**
  * Each cue's DCAs as they were when it was last left: {channels, fader, muted} per DCA,
  * so going Back into a cue puts its faders and mutes back
  * @type {Map<string, Map<number, {channels: String, fader: Number | null, muted: Boolean | null}>>}
@@ -471,6 +477,7 @@ const do_connect = async (host, port, name) => {
 	presonusClient = client;
 	dca_faders = new Map();
 	dca_mutes = new Map();
+	line_mutes = new Map();
 
 	// Console mute group buttons as Go / Back
 	attachConsoleButtons(client);
@@ -486,6 +493,13 @@ const do_connect = async (host, port, name) => {
 		const mute = /^filtergroup\/ch(\d+)\/mute$/.exec(name);
 		if (mute && typeof value === 'boolean') {
 			dca_mutes.set(Number(mute[1]), value);
+			return;
+		}
+
+		// Line muted / unmuted on the console
+		const line_mute = /^line\/ch(\d+)\/mute$/.exec(name);
+		if (line_mute && typeof value === 'boolean') {
+			line_mutes.set(Number(line_mute[1]), value);
 			return;
 		}
 
@@ -540,6 +554,7 @@ const do_connect = async (host, port, name) => {
 			// The console may also have been reset, so resend the DCA colors.
 			dca_faders = new Map();
 			dca_mutes = new Map();
+			line_mutes = new Map();
 			dca_colors = new Map();
 			resync_after_reconnect(client);
 
@@ -662,7 +677,8 @@ const get_cue_channels = () => {
 
 	let arr = [];
 
-	for (let i = 1; i <= 8; i++) {
+	// The same DCAs write_dcas writes (the console may have fewer than 8)
+	for (let i = 1; i <= get_dca_count(); i++) {
 		arr.push(...get_dca_channels(current_cue, i));
 	}
 
@@ -823,6 +839,59 @@ const set_dca_mute = (dca, muted) => {
 	const selector = {type: 'DCA', channel: dca};
 	if (muted) presonusClient.mute(selector); else presonusClient.unmute(selector);
 	dca_mutes.set(dca, muted);
+}
+
+/**
+ * The channels the show controls (TheatreMix Show Setup → Channels), else CONTROLLED_LINES
+ * @returns {Number[]}
+ */
+const get_show_channels = () => {
+	const from_show = String(getShow()?.config?.channels ?? "")
+		.split(",")
+		.map(Number)
+		.filter((ch) => Number.isInteger(ch) && ch > 0);
+	return from_show.length ? from_show : CONTROLLED_LINES;
+}
+
+/**
+ * Whether a line is muted on the console right now
+ * @param {Number} ch
+ * @returns {Boolean | null} null if unknown
+ */
+const read_line_mute = (ch) => {
+	const muted = line_mutes.get(ch) ?? presonusClient?.state.get(`line/ch${ch}/mute`);
+	return typeof muted === 'boolean' ? muted : null;
+}
+
+/**
+ * Mute the show's channels that aren't in any of the cue's DCAs, and unmute the ones that are,
+ * so only lines on a DCA ever reach the output (TheatreMix: "consoleMuteDCAUnassign", on unless
+ * the show turns it off). Lines are only sent a mute when it changes.
+ *
+ * Called in two passes around the DCA writes, so nobody is briefly live on the wrong DCA:
+ * 'mute' before (channels leaving the DCAs go quiet first), 'unmute' after (channels joining
+ * come up once they're on their DCA).
+ * @param {Number[]} cue_channels channels in the cue's DCAs
+ * @param {'mute' | 'unmute'} pass
+ */
+const write_line_mutes = (cue_channels, pass) => {
+	if (getShow()?.config?.consoleMuteDCAUnassign === "0") return;
+
+	const assigned = new Set(cue_channels);
+	const changed = [];
+	for (const ch of get_show_channels()) {
+		const muted = !assigned.has(ch);
+		if (muted !== (pass === 'mute') || read_line_mute(ch) === muted) continue;
+
+		const selector = {type: 'LINE', channel: ch};
+		if (muted) presonusClient.mute(selector); else presonusClient.unmute(selector);
+		line_mutes.set(ch, muted);
+		changed.push(ch);
+	}
+
+	if (changed.length) {
+		debugLog('MUTES', `${pass === 'mute' ? "Muted (not on a DCA)" : "Unmuted (on a DCA)"}: ch ${changed.join(", ")}`);
+	}
 }
 
 /**
@@ -1037,11 +1106,17 @@ const write_cue = async (_event, {cue_object, back = false}) => {
 	const restore_on_back = back && getSettings().restoreOnBack;
 	const restore = restore_on_back ? cue_snapshots.get(cue_key(cue_object)) : undefined;
 	if (restore_on_back) debugLog('LEVELS', `Back to cue ${cue_key(cue_object)}: ${restore ? "restoring its DCAs" : "never left before, nothing to restore"}`);
+
+	// Only lines on one of this cue's DCAs come through: mute the rest before the DCAs change,
+	// unmute the new ones after they're on their DCA
+	const cue_channels = get_cue_channels();
+	write_line_mutes(cue_channels, 'mute');
 	write_dcas(cue_object, restore);
+	write_line_mutes(cue_channels, 'unmute');
 	update_dca_colors();
 
 	// Channels in this cue's DCAs show yellow while they have signal
-	setActiveChannels(get_cue_channels());
+	setActiveChannels(cue_channels);
 
 	// TODO: Write AUX assignments?
 	// filtergroup/ch1/mute_aux* - 0 or 1
@@ -1200,6 +1275,8 @@ const fire_sound_check = async (_event) => {
 
 	debugLog('LINECHECK', "Line Checks: actors' names on the lines, clearing every DCA");
 	set_soundcheck_labels();
+	// No DCAs, so every show channel is muted
+	write_line_mutes([], 'mute');
 	write_dcas({});
 	update_dca_colors();
 	setActiveChannels([]);

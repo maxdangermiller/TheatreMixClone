@@ -86,6 +86,33 @@ If a show has no StudioLive buttons set yet, it uses the ones from TheatreMix (*
    If Universal Control shows **No Devices available**: it silently ignores a console whose serial number it has seen before with a different device ID. The simulator uses the real console's ID for its serial (`KNOWN_GUIDS` in `sim/studiolive_sim.py`); a different `--serial` needs a matching `--guid`, or a made-up serial. After a Mac restart the loopback alias from step 1 is gone, so either add it again or run the simulator with `--bind-ip 127.0.0.1` (no alias needed; connect to 127.0.0.1).
 4. Type commands into the simulator to act like the console, e.g. `press 6` (press mute group 6's button the way the real console does; an empty group only sends "off"), `set line/ch1/mute 1`, `name line/ch2/username Nala`, `dca` (show DCAs), `signal 3 -20` / `signal 3 off` / `signal all off` (a mic with / without signal), `kick` (drop connections, like a network blip), `help`.
 
+   Log messages print above the line you're typing, so a busy log doesn't break up a command. **Up/Down** go through earlier commands, **Ctrl-U** clears the line, **Ctrl-C** quits. Enter works even if the terminal was left in a bad state (Enter showing as `^M`), and the simulator leaves the terminal working when it exits.
+
+### Real audio on the lines
+The simulator can play a recording on each line, so the meters (and the app's channel colors) behave like real mics: pauses between lines, loud peaks, a mic that goes quiet. Put one audio file per line in a folder (m4a, wav, mp3, aiff…; decoded with `ffmpeg` if it's installed, otherwise macOS's `afconvert`) and either start the simulator with `--audio <folder>` or type `play <folder>` once it's running. Needs `--meter-hz 20`.
+
+A file with **music** or **tape** in its name plays on **Tape In** (the console's stereo 2-track input) instead of a line, so the show's music feed comes in the way it does live: on Tape In's meters, and into the main mix through Tape In's fader, mute, balance and DCAs. Every other file goes to the line whose **channel number** is in its name (`01.m4a`, `ch3.m4a`, `Track 12.m4a`, `12 Otis King.m4a`), or else the line with that **name** (`Otis King.m4a`). Names are matched against what's on the console when you type `play`, so to match actors' names, run `play` after the app has connected (Line Checks puts their names on the lines); numbers always work. All the tracks run in sync from the top and loop when the longest ends, and starting a new one restarts them all together. The meters move before the fader and mute, like the real console's input meters. To hear the show, turn on **listen** (below). The levels show on Universal Control's channel meters and drive the app's line colors.
+
+| Command | |
+|---|---|
+| `play <folder> [gain]` | Play every track in a folder (optional gain in dB for all of them) |
+| `play <file> <ch> [gain]` | Play one file on a channel, e.g. `play ~/Desktop/nala.m4a 9 -6`; `tape` for Tape In |
+| `tracks` | What's playing, on which lines, and the position |
+| `pause` / `resume` / `seek <s or m:ss>` | Move around in the recordings |
+| `+30` / `-1:00` (or `seek +30`) | Skip forward / back from where playback is |
+| **←/→**, **Shift-←/→**, **Space** | On an empty prompt line: skip back / forward 10 s, 1 minute, pause / resume |
+| `loop <start> <end>` / `loop off` | Play (and loop) just part of the recordings, e.g. `loop 0 25:59`. `play` warns when tracks turn into constant full-scale noise part way through (a recording fault) and suggests a loop that stops before it |
+| `gain <ch\|all> <dB>` | Turn a track up or down. Recordings made with lots of headroom barely move the meters; `play` lists each track's peak and suggests a gain when they're quiet |
+| `stop [ch]` | Stop one line's track, or all of them |
+| `listen on` / `listen off` | Play the main mix out of this computer's default audio output (or start with `--listen`) |
+| `listen` / `listen volume <dB>` | What's audible in the main mix / turn down what you hear without touching the console |
+
+**Hearing the main mix:** `listen on` mixes the tracks the way the console builds its main (LR) mix and plays it through your Mac's default output: each line's fader, mute, pan and main assign, the DCAs it's in (a DCA's fader adds its level, a muted DCA mutes it), mute groups that are on, and the main fader. So firing cues in the app, or moving faders in Universal Control, is heard straight away. A track's `gain` applies too, like a mic's preamp. Needs `ffplay`, which comes with ffmpeg (`brew install ffmpeg`).
+
+While tracks are loaded, the prompt shows where playback is, e.g. `▶ 15:02.4 ━━━━━━━━━━────── 25:59.9 >` (⏸ when paused; the bar covers the `loop` if one is set).
+
+Big files take a while to load (19 tracks of 50 minutes is about 45 seconds); the prompt keeps working meanwhile. The app recolors lines about once a second while tracks play, so the simulator only prints line color changes with `-v`.
+
 ## Channel monitoring
 Like TheatreMix, the show's channels are colored on the console from the meters: **red** when nearly clipping (−3 dBFS or louder; faulty cable or connector), held for 10 seconds after the last peak so it can be checked; **blue** after 3 seconds below −60 dBFS (mic off, flat battery, out of range); **white** when there's signal; **yellow** when there's signal and the channel is in the current cue's DCAs. Settings are at the top of `src/main/channelMonitor.js`. Lines tagged `[METERS]` in the debug log show every color change and each meter group the first time the console sends it. The console leaves silent channels and groups out of its meter frames, so a channel that's missing from them counts as silent.
 

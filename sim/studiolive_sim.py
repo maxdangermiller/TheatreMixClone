@@ -13,6 +13,9 @@ What it does
     echoed to every subscribed client), FR file requests -> FD, KA keep-alive.
   * UDP metering: "MS"/"levl" frames sent to the port each client announced in UM.
   * Interactive prompt to push changes from the "console" side (type `help`).
+  * Real audio on the line meters: `play <folder>` (or --audio) plays one recording per line
+    (see audio_tracks.py), and `listen on` (or --listen) plays the main mix of them out of this
+    computer, following the faders, mutes and DCAs (see main_mix.py).
   * JSONL packet capture (--log-file) so you can diff what your client sends.
 
 Source of truth for the wire format: featherbear's reverse-engineering notes
@@ -25,7 +28,7 @@ Confidence per area:
           functions so it is cheap to fix once you compare against a real capture.
           Best fix: --state-file <dump from a real console> to replay a real tree.
 
-Requires Python 3.9+, stdlib only.
+Requires Python 3.9+, stdlib only (plus ffmpeg or macOS's afconvert to decode audio for `play`).
 """
 from __future__ import annotations
 
@@ -48,6 +51,10 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from audio_tracks import TAPE, TrackPlayer, parse_target, target_name
+from main_mix import MainMixOutput, balance_gains, pan_gains
+from console_prompt import Prompt, PromptLogHandler
 
 log = logging.getLogger("slsim")
 
@@ -680,16 +687,22 @@ def build_ck(offset: int, total: int, chunk: bytes) -> bytes:
 # Group id bytes are [channel type][metering stage].  Values are u16, 0 when silent.
 # Line groups (type byte 0) hold one value per line channel; the capture's 20 is just where its
 # trailing silent channels were trimmed, so they're sized for all 32 here (see build_meter_frame).
-REAL_METER_LAYOUT = [(256, 6), (4, 32), (5, 32), (6, 32), (258, 6), (259, 6), (260, 6), (261, 6),
+REAL_METER_LAYOUT = [(0, 32), (256, 6), (4, 32), (5, 32), (6, 32), (258, 6), (259, 6), (260, 6), (261, 6),
                      (1024, 1), (1026, 16), (1027, 16), (1028, 16), (1029, 16),
                      (1280, 2), (1282, 2), (1283, 2), (1285, 2),
                      (1792, 2), (1794, 2), (1795, 2), (1796, 2), (1797, 2)]
 
 
-# Line channel meter groups (type byte 0, metering stages 4-6), and the dB <-> meter value scale
-# (linear, 65535 = 0 dBFS, checked against Universal Control's meters)
-INPUT_METER_GROUPS = (4, 5, 6)
+# Line channel meter groups (type byte 0) and the dB <-> meter value scale (linear, 65535 = 0 dBFS,
+# calibrated against Universal Control's channel meters). Dad's console sends line levels in stages
+# 4-6; Universal Control's channel strips draw stage 0, so the simulator sends both (the app reads
+# whichever is loudest).
+INPUT_METER_GROUPS = (0, 4, 5, 6)
 INPUT_METER_COUNT = 32
+# Return channels (type byte 1): 3 stereo returns, left / right each, so Tape In (return 3) is
+# values 4 and 5 of each return group
+TAPE_METERS = tuple((group, i) for group in (256, 258, 259, 260, 261) for i in (4, 5))
+TAPE_RETURN = "return/ch3"
 
 
 def db_to_meter(db: float) -> int:
@@ -823,7 +836,10 @@ class Session:
         elif t == b"PC":
             key, _, rest = p.body.partition(b"\0")
             self.sim.state.set(key.decode("latin-1"), rest[2:].hex())
-            log.info("%s PC %s = %s", self, key.decode("latin-1"), rest[2:].hex())
+            # Line colors change about once a second while the app follows the meters (more with
+            # `play`), which would bury the prompt, so they're only shown with -v. DCA colors stay.
+            log.log(logging.DEBUG if key.startswith(b"line/") else logging.INFO,
+                    "%s PC %s = %s", self, key.decode("latin-1"), rest[2:].hex())
             self.sim.broadcast(b"PC", p.body, exclude=self if self.sim.args.no_echo_sender else None,
                                sender=self, sender_cb=cb)
         elif t == b"FR":
@@ -946,6 +962,10 @@ class Simulator:
         self.meter_values: dict = {}
         # Extra meter groups appended to the real layout: [(group, count)] (meter addgroup)
         self.meter_extra_groups: list = []
+        # Recordings playing on line channels; they set those channels' input meters (play / --audio)
+        self.audio = TrackPlayer(INPUT_METER_GROUPS, INPUT_METER_COUNT, self.line_names, TAPE_METERS)
+        # The main mix of those tracks, out of this computer's default audio output (listen / --listen)
+        self.main_mix = MainMixOutput(self.audio, self.main_mix_gains)
         # (ip, port) of clients that probed for consoles; announces are sent to them too. Remembered in
         # PROBE_CACHE_FILE so a restarted simulator reappears in an already-open Universal Control (it
         # only probes when it starts, and loopback can't carry the broadcast a real console relies on).
@@ -1031,8 +1051,61 @@ class Simulator:
         self.note_dca(key, "console", before)
         self.broadcast(b"PV", build_pv(key, value))
 
+    def line_names(self) -> dict[int, str]:
+        """{channel: name} for the line channels, as shown on the console"""
+        return {ch: str(self.state.get(f"line/ch{ch}/username") or "") for ch in range(1, INPUT_METER_COUNT + 1)}
+
+    def main_mix_gains(self) -> tuple[dict[int, tuple[float, float]], float]:
+        """
+        How loud each line with a track (and Tape In) is in the main (LR) mix, from the console state:
+        ({channel: (left, right) gain}, main gain). A channel is left out (silent) when it's muted, off
+        the main mix, in a muted DCA or an active mute group, or its fader (or a DCA's) is at -inf.
+        Tape In is stereo: its pan works as a balance.
+        """
+        def fader_db(key: str) -> Optional[float]:
+            pct = self.state.get(key)
+            return pct_to_db(float(pct)) if isinstance(pct, (int, float)) and not isinstance(pct, bool) else 0.0
+
+        def on(key: str) -> bool:
+            return bool(self.state.get(key))
+
+        main_db = fader_db("main/ch1/volume")
+        main = 0.0 if on("main/ch1/mute") or main_db is None else 10 ** (main_db / 20)
+
+        fg = self.state._walk(["filtergroup"], create=False) or {}
+        dcas = sorted(int(k[2:]) for k in fg.get("children", {}) if re.fullmatch(r"ch\d+", k))
+        active_groups = []
+        for g in range(1, 9):
+            members = self.state.get(f"mutegroup/mutegroup{g}mutes")
+            if on(f"mutegroup/mutegroup{g}") and isinstance(members, str):
+                active_groups.append(members)
+
+        gains = {}
+        for ch in self.audio.tracks:
+            # Tape In is return 3; DCAs list it as "return3"
+            line, dca_key = (TAPE_RETURN, "return3") if ch == TAPE else (f"line/ch{ch}", f"line{ch}")
+            if on(f"{line}/mute") or self.state.get(f"{line}/lr") in (0, False):
+                continue
+            if ch != TAPE and any(len(m) >= ch and m[ch - 1] == "1" for m in active_groups):
+                continue
+            db = fader_db(f"{line}/volume")
+            for d in dcas:
+                member = self.state.get(f"filtergroup/ch{d}/{dca_key}")
+                if db is None or not (isinstance(member, (int, float)) and float(member) >= 0.5):
+                    continue
+                dca_db = fader_db(f"filtergroup/ch{d}/volume")
+                db = None if on(f"filtergroup/ch{d}/mute") or dca_db is None else db + dca_db
+            if db is None:
+                continue
+            pan = self.state.get(f"{line}/pan")
+            pan = float(pan) if isinstance(pan, (int, float)) else 0.5
+            left, right = balance_gains(pan) if ch == TAPE else pan_gains(pan)
+            gain = 10 ** (db / 20)
+            gains[ch] = (left * gain, right * gain)
+        return gains, main
+
     def signal_command(self, args: list) -> str:
-        """signal <ch|all> <dB|off>: set a line channel's meters (groups 4-6), e.g. signal 3 -20"""
+        """signal <ch|all> <dB|off>: set a line channel's meters (groups 0 and 4-6), e.g. signal 3 -20"""
         if len(args) != 2:
             return "usage: signal <channel|all> <dB|off>   e.g.  signal 3 -20   signal all off"
         level = 0 if args[1] == "off" else db_to_meter(float(args[1]))
@@ -1128,6 +1201,10 @@ class Simulator:
             self.tasks.append(asyncio.create_task(self._announce_loop()))
         if a.meter_hz > 0:
             self.tasks.append(asyncio.create_task(self._meter_loop()))
+        if a.audio:
+            self.tasks.append(asyncio.create_task(self._load_audio(Path(a.audio).expanduser())))
+        if a.listen:
+            log.info("%s", self.main_mix.start())
         if a.bind_ip == "0.0.0.0" and not a.announce_to and not a.no_discovery:
             log.warning("bound to 0.0.0.0: the broadcast leaves via the OS default route, which is often the "
                         "wrong NIC (esp. Windows/VPN/Docker). Use --bind-ip <LAN ip> [--netmask 255.255.255.0] "
@@ -1142,6 +1219,7 @@ class Simulator:
                  a.model, a.name, a.serial, a.bind_ip, a.port, self.state.count())
 
     async def stop(self) -> None:
+        self.main_mix.stop()
         for t in self.tasks:
             t.cancel()
         for s in list(self.sessions):
@@ -1167,10 +1245,17 @@ class Simulator:
             self.announce()
             await asyncio.sleep(self.args.announce_interval)
 
+    async def _load_audio(self, target: Path, channel: Optional[int] = None, gain_db: float = 0.0) -> None:
+        if not self.args.meter_hz:
+            log.warning("play: meters are off, so the tracks won't show; start with --meter-hz 20")
+        report = await asyncio.get_running_loop().run_in_executor(None, self.audio.load, target, channel, gain_db)
+        log.info("%s", report)
+
     async def _meter_loop(self) -> None:
         period = 1.0 / self.args.meter_hz
         while True:
             await asyncio.sleep(period)
+            self.audio.update(self.meter_values)
             if not self.tx:
                 continue
             layout = REAL_METER_LAYOUT + self.meter_extra_groups
@@ -1191,6 +1276,20 @@ HELP = """commands:
   set <key> <float>     push a parameter change, e.g.  set line/ch1/mute 1
   signal <ch|all> <dB|off>  input level on a line channel (needs --meter-hz), e.g.  signal 3 -20 ;  signal all off
   meter <g> <i|all> <v> raw meter value in any group, e.g.  meter 4 0 30000 ;  meter clear
+  play <folder> [gain]  play one recording per line on the input meters (needs --meter-hz). Files go to
+                        the channel number in their name (01.m4a, ch3.m4a, "12 Otis King.m4a") or the line
+                        with that name ("Otis King.m4a"). All tracks run in sync and loop.
+  play <file> <ch> [gain]  play one file on a channel, e.g.  play ~/Desktop/nala.m4a 9 -6
+                        (ch can be "tape": Tape In. Files with "music" or "tape" in the name go there anyway)
+  tracks                what's playing and where;  pause / resume / seek <seconds or m:ss>
+  +30 / -1:00           skip forward / back.  On an empty line: ←/→ skip 10 s, Shift-←/→ 1 min,
+                        Space pauses / resumes.  The prompt shows where playback is.
+  loop <start> <end>    play (and loop) just part of the recordings, e.g.  loop 0 26:00 ;  loop off
+  stop [ch]             stop one channel's track, or all
+  gain <ch|all> <dB>    turn a track up or down on the meters (e.g. a quiet recording)
+  listen on|off         play the main mix of the tracks out of this computer's default audio output,
+                        following line faders, mutes, pans, DCAs, mute groups and the main fader
+  listen                what's audible in the main mix;  listen volume <dB>  trims what you hear
   press <n>             press mute group n's button like on the real console: an empty group doesn't
                         latch, so it only sends mutegroupN = 0; one with channels in it latches on (= 1)
   name <key> <text>     push a string change,           e.g.  name line/ch1/username Kick
@@ -1205,41 +1304,141 @@ HELP = """commands:
   quit"""
 
 
+# Command output; repl() points this at the prompt so it prints above the line being typed
+say = print
+
+
+def parse_time(text: str) -> float:
+    """Seconds, or m:ss"""
+    if ":" in text:
+        minutes, seconds = text.split(":", 1)
+        return int(minutes) * 60 + float(seconds)
+    return float(text)
+
+
+async def play_command(sim: Simulator, rest: str) -> None:
+    """play <folder|file> [channel] [gain dB]; the path may contain spaces (quote it or not)"""
+    words = rest.split()
+    numbers = []
+    # Trailing numbers (or "tape") are channel / gain, unless they're part of a path that exists
+    while words and re.fullmatch(r"[+-]?\d+(\.\d+)?|tape", words[-1], re.IGNORECASE) \
+            and not Path(" ".join(words)).expanduser().exists():
+        numbers.insert(0, words.pop())
+    path = Path(" ".join(words).strip("'\"")).expanduser()
+    target_is_file = path.is_file()
+    channel = parse_target(numbers[0]) if target_is_file and numbers else None
+    gain = float(numbers[1 if target_is_file else 0]) if len(numbers) > (1 if target_is_file else 0) else 0.0
+    say(f"decoding {path.name or path} ...")
+    await sim._load_audio(path, channel, gain)
+
+
 async def repl(sim: Simulator) -> None:
+    """The command prompt: log messages print above the line being typed (see console_prompt.py)"""
+    global say
     loop = asyncio.get_running_loop()
-    print(HELP)
+    # ←/→ skip 10 s, Shift-←/→ a minute, Space pauses (on an empty line, while tracks are loaded)
+    def transport_key(key: str) -> bool:
+        if not sim.audio.tracks:
+            return False
+        if key == "space":
+            sim.audio.toggle_pause()
+        else:
+            sim.audio.skip({"left": -10, "right": 10, "shift-left": -60, "shift-right": 60}[key])
+        return True
+
+    prompt = Prompt(status=sim.audio.transport_line, on_key=transport_key)
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    handler = PromptLogHandler(prompt)
+    handler.setFormatter(old_handlers[0].formatter if old_handlers else logging.Formatter("%(message)s"))
+    root.handlers = [handler]
+    say = prompt.print
+    prompt.start(loop)
+    try:
+        await _repl(sim, prompt)
+    finally:
+        prompt.stop()
+        root.handlers = old_handlers
+        say = print
+
+
+async def _repl(sim: Simulator, prompt: Prompt) -> None:
+    say(HELP)
     while True:
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        if not line:
-            return  # stdin closed: keep serving
+        line = await prompt.readline()
         parts = line.strip().split(None, 2)
         if not parts:
             continue
         cmd = parts[0].lower()
         try:
+            # +30, -1:00: skip forward / back from where playback is
+            if re.fullmatch(r"[+-]\d+(\.\d+)?(:\d+(\.\d+)?)?", cmd):
+                sim.audio.skip((-1 if cmd[0] == "-" else 1) * parse_time(cmd[1:]))
+                say(sim.audio.transport_line())
+                continue
             if cmd == "set" and len(parts) == 3:
                 sim.push_pv(parts[1], float(parts[2]))
             elif cmd == "press" and len(parts) == 2:
-                print(sim.press_mute_group(int(parts[1])))
+                say(sim.press_mute_group(int(parts[1])))
             elif cmd == "signal":
-                print(sim.signal_command(line.strip().split()[1:]))
+                say(sim.signal_command(line.strip().split()[1:]))
             elif cmd == "meter":
-                print(sim.meter_command(line.strip().split()[1:]))
+                say(sim.meter_command(line.strip().split()[1:]))
+            elif cmd == "play" and len(parts) >= 2:
+                # Loads in the background (big files take a while), so the prompt keeps working
+                asyncio.ensure_future(play_command(sim, line.strip()[len(parts[0]):].strip()))
+            elif cmd == "tracks":
+                say(sim.audio.status())
+            elif cmd == "stop":
+                say(sim.audio.stop(sim.meter_values, parse_target(parts[1]) if len(parts) > 1 else None))
+            elif cmd == "pause":
+                sim.audio.pause()
+                say(sim.audio.status())
+            elif cmd == "resume":
+                sim.audio.resume()
+                say(sim.audio.status())
+            elif cmd == "seek" and len(parts) == 2:
+                arg = parts[1]
+                if arg[0] in "+-":   # seek +30 / seek -1:00: relative
+                    sim.audio.skip((-1 if arg[0] == "-" else 1) * parse_time(arg[1:]))
+                else:
+                    sim.audio.seek(parse_time(arg))
+                say(sim.audio.status())
+            elif cmd == "loop" and len(parts) >= 2:
+                if parts[1].lower() in ("off", "all"):
+                    say(sim.audio.set_loop(None, None))
+                elif len(parts) == 3:
+                    say(sim.audio.set_loop(parse_time(parts[1]), parse_time(parts[2])))
+                else:
+                    say("usage: loop <start> <end>  (seconds or m:ss), or  loop off")
+            elif cmd == "listen":
+                arg = parts[1].lower() if len(parts) > 1 else ""
+                if arg == "on":
+                    say(sim.main_mix.start())
+                elif arg == "off":
+                    say(sim.main_mix.stop())
+                elif arg == "volume" and len(parts) == 3:
+                    sim.main_mix.volume_db = float(parts[2])
+                    say(sim.main_mix.status())
+                else:
+                    say(sim.main_mix.status())
+            elif cmd == "gain" and len(parts) == 3:
+                say(sim.audio.set_gain(parts[1].lower(), float(parts[2])))
             elif cmd == "name" and len(parts) == 3:
                 sim.push_ps(parts[1], parts[2])
             elif cmd == "get" and len(parts) >= 2:
-                print(sim.state.get(parts[1]))
+                say(sim.state.get(parts[1]))
             elif cmd == "dca":
                 arg = parts[1].lower() if len(parts) > 1 else ""
                 if arg.isdigit():
-                    print(format_dca(sim.state, only=int(arg), color=sim.use_color(sys.stdout), tags=sim.dca_tags))
+                    say(format_dca(sim.state, only=int(arg), color=sim.use_color(sys.stdout), tags=sim.dca_tags))
                 else:
-                    print(format_dca(sim.state, show_all=(arg == "all"), color=sim.use_color(sys.stdout),
+                    say(format_dca(sim.state, show_all=(arg == "all"), color=sim.use_color(sys.stdout),
                                      tags=sim.dca_tags))
             elif cmd == "lines":
-                print(format_lines(sim.state))
+                say(format_lines(sim.state))
             elif cmd == "legend":
-                print(format_legend(sim.use_color(sys.stdout)))
+                say(format_legend(sim.use_color(sys.stdout)))
             elif cmd == "tag" and len(parts) >= 2:
                 target, status = parts[1].lower(), (parts[2].lower() if len(parts) > 2 else "")
                 if target == "clear" and not status:
@@ -1260,10 +1459,10 @@ async def repl(sim: Simulator) -> None:
                             sim.dca_tags.pop(n, None)
                         else:
                             sim.dca_tags[n] = status
-                print(format_dca(sim.state, color=sim.use_color(sys.stdout), tags=sim.dca_tags))
+                say(format_dca(sim.state, color=sim.use_color(sys.stdout), tags=sim.dca_tags))
             elif cmd == "clients":
                 for s in sim.sessions:
-                    print(s, "meter port:", s.meter_port)
+                    say(s, "meter port:", s.meter_port)
             elif cmd == "kick":
                 for s in list(sim.sessions):
                     if len(parts) < 2 or str(s.id) == parts[1]:
@@ -1271,9 +1470,9 @@ async def repl(sim: Simulator) -> None:
             elif cmd in ("quit", "exit"):
                 raise asyncio.CancelledError
             else:
-                print(HELP)
+                say(HELP)
         except ValueError as e:
-            print("error:", e)
+            say("error:", e)
 
 
 # --------------------------------------------------------------------------- main
@@ -1302,6 +1501,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap.add_argument("--meter-hz", type=float, default=0.0,
                     help="UDP meter frames per second (default 0 = off; a real console sends ~20). "
                          "Same format as a real console, so Universal Control shows them")
+    ap.add_argument("--audio", metavar="FOLDER",
+                    help="play one recording per line channel on the input meters (see `play` in help)")
+    ap.add_argument("--listen", action="store_true",
+                    help="play the main mix of the --audio tracks out of this computer's default audio output")
     ap.add_argument("--latency-ms", type=float, default=0.0, help="delay every outgoing TCP packet")
     ap.add_argument("--no-color", action="store_true", help="plain DCA table (also automatic when not a terminal or NO_COLOR is set)")
     ap.add_argument("--ka-reply", action="store_true",
